@@ -1,0 +1,8 @@
+{
+  "default_output_dir": "",
+  "excel_template_path": "",
+  "invoice_title_source": "filename",
+  "ocr_enabled": true,
+  "ocr_confidence_threshold": 0.75,
+  "max_preview_text_chars": 1200
+}

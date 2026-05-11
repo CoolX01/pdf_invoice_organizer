@@ -1,0 +1,12 @@
+PySide6>=6.8.1
+PyQt6>=6.8.0
+PyMuPDF>=1.24.14
+pdfplumber>=0.11.4
+openpyxl>=3.1.5
+Pillow>=10.4.0
+numpy>=1.26.4
+rapidocr_onnxruntime>=1.4.4
+pyinstaller>=6.11.0
+
+# Optional: install this later if you want to switch to PaddleOCR
+# paddleocr>=2.8.1
