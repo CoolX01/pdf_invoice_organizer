@@ -2,7 +2,26 @@
 
 一个基于 Python + Qt 的本地桌面工具，用于批量导入 PDF 发票、解析关键信息、在界面中预览结果，并导出 Excel。
 
+![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
+![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-lightgrey)
+![License](https://img.shields.io/badge/License-MIT-green)
+
 这个仓库保留源码、配置、打包脚本和文档，不提交本地虚拟环境、构建目录、`.app`、`.exe`、压缩包等产物。
+
+## 适用场景
+
+- 批量整理 PDF 发票并提取关键信息
+- 本地离线处理，不依赖在线上传
+- 导出 Excel 供报销、对账或归档使用
+
+## 快速开始
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r source/requirements.txt
+python main.py
+```
 
 ## 功能概览
 
