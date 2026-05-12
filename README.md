@@ -23,6 +23,12 @@ pip install -r source/requirements.txt
 python main.py
 ```
 
+## 界面预览
+
+![界面预览](source/assets/preview.png)
+
+这张图用于展示当前版本的界面布局和信息层级；在没有本地 Qt 运行环境时，也能先快速看出这个工具长什么样。
+
 ## 功能概览
 
 - 批量导入 PDF 发票
