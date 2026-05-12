@@ -1,0 +1,45 @@
+name: Build Windows Package
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+
+      - name: Install dependencies
+        run: pip install -r source/requirements.txt pyinstaller
+
+      - name: Build Windows package
+        shell: cmd
+        run: build_windows.bat
+
+      - name: Compress package
+        shell: powershell
+        run: |
+          $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+          $zipName = "PDF发票自动整理归纳工具_windows_$timestamp.zip"
+          Compress-Archive -Path "app/windows/PDF发票自动整理归纳工具" -DestinationPath $zipName
+          "ZIP_NAME=$zipName" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-package
+          path: ${{ env.ZIP_NAME }}
