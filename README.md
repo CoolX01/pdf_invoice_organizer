@@ -23,11 +23,11 @@ pip install -r source/requirements.txt
 python main.py
 ```
 
-## 界面示意图
+## 界面截图
 
-![界面示意图](source/assets/preview.png)
+![界面截图](source/assets/screenshot.png)
 
-这张图是界面示意图，用来展示布局和信息层级，不是本机实时运行截屏。
+这张图是本机实际运行时的窗口截屏，用来展示当前界面布局和信息层级。
 
 ## 功能概览
 
