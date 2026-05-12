@@ -34,3 +34,15 @@
 - macOS Apple Silicon: `PDF发票自动整理归纳工具_mac_apple_silicon_YYYYMMDD_HHMMSS.zip`
 - macOS Intel: `PDF发票自动整理归纳工具_mac_intel_YYYYMMDD_HHMMSS.zip`
 - Windows: `PDF发票自动整理归纳工具_windows_YYYYMMDD_HHMMSS.zip`
+
+## Release 命名建议
+
+- Release 标题建议：`PDF 发票自动整理归纳工具 vX.Y.Z`
+- 如果是首个正式版本，也可以直接用：`PDF 发票自动整理归纳工具 v1.0.0`
+- Tag 建议：`vX.Y.Z`
+
+## 附件上传清单示例
+
+- `PDF发票自动整理归纳工具_mac_apple_silicon_20260512_150000.zip`
+- `PDF发票自动整理归纳工具_mac_intel_20260512_150000.zip`
+- `PDF发票自动整理归纳工具_windows_20260512_150000.zip`
