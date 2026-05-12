@@ -35,7 +35,11 @@ jobs:
         run: |
           $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
           $zipName = "PDF发票自动整理归纳工具_windows_$timestamp.zip"
-          Compress-Archive -Path "app/windows/PDF发票自动整理归纳工具" -DestinationPath $zipName
+          $packageDir = Get-ChildItem -Path "app/windows" -Directory | Select-Object -First 1
+          if (-not $packageDir) {
+            throw "Package directory not found under app/windows."
+          }
+          Compress-Archive -LiteralPath $packageDir.FullName -DestinationPath $zipName
           "ZIP_NAME=$zipName" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Upload artifact
