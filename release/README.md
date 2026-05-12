@@ -8,6 +8,14 @@
 - `.app`、`.exe`、`.zip` 通过 GitHub Release 分发
 - 运行日志和用户配置不进入仓库
 
+## 发布包数量
+
+当前建议对外发布 `3` 个安装包或压缩包：
+
+- `Windows` 版本 `1` 个
+- `macOS Apple Silicon` 版本 `1` 个
+- `macOS Intel` 版本 `1` 个
+
 ## 平台说明
 
 - [macOS 发布说明](mac/README.md)
