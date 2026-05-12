@@ -106,6 +106,15 @@ pip install -r source/requirements.txt
 python main.py
 ```
 
+## 运行方式说明
+
+这个项目有两种常见运行方式：
+
+- 源码运行：在项目目录中安装依赖后，直接执行 `python main.py`
+- 打包运行：运行打包脚本后，使用生成的 `.app`、`.exe` 或发布压缩包
+
+如果你看到的是开发阶段窗口截图，那也可能来自源码运行版本，而不一定是已经打包完成的安装包。
+
 ## 打包说明
 
 ### macOS Apple Silicon
