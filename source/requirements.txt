@@ -5,7 +5,8 @@ pdfplumber>=0.11.4
 openpyxl>=3.1.5
 Pillow>=10.4.0
 numpy>=1.26.4
-rapidocr_onnxruntime>=1.4.4
+rapidocr_onnxruntime>=1.4.4; platform_system != "Windows"
+rapidocr_onnxruntime==1.2.3; platform_system == "Windows"
 pyinstaller>=6.11.0
 
 # Optional: install this later if you want to switch to PaddleOCR
