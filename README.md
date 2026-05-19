@@ -33,12 +33,19 @@ python main.py
 
 - 批量导入 PDF 发票
 - 支持拖拽 PDF 到窗口
-- 优先直接提取 PDF 文本，必要时自动 OCR 兜底
-- 在 GUI 中预览解析结果、总金额和重复组数
-- 支持重复文件识别、重复发票号码标记
-- 支持从结果中移除重复项
-- 支持导出 `.xlsx`
-- 预留模板导出能力
+- 导入时校验 PDF 后缀、文件大小和 PDF 文件头，跳过异常文件
+- 优先直接提取 PDF 文本；字段缺失、版式错序或疑似串字段时会自动 OCR 复核/补全
+- 在 GUI 中预览解析结果、状态、失败/复核原因、总金额和重复组数
+- 支持按全部、失败、需复核、重复筛选结果，并用颜色高亮问题行
+- 支持双击结果行查看发票详情、OCR 信息和原文预览
+- 支持金额、日期、发票号码等关键字段校验
+- 支持重复文件识别、重复发票号码标记；同票号但金额/日期/销售方不一致会标为高风险冲突
+- 支持从结果中移除重复项；也可在二次确认后将本地重复文件移到系统回收站/废纸篓
+- 支持一键导出全部结果为 `.xlsx`
+- 导出的 Excel 自动包含“问题汇总”工作表，方便定位失败、重复和需复核记录
+- 如目标 Excel 已存在，会自动另存为带时间戳的新文件，避免覆盖旧结果
+
+> 当前版本重点是“识别 + 预览 + Excel 汇总”。PDF 原文件的自动重命名、复制归档目录、归档后删除原文件等流程尚未作为默认功能开放；如需启用这类高风险操作，建议先做“预览重命名结果 → 冲突检测 → 复制校验 → 再人工确认”的安全流程。
 
 ## 仓库结构
 
@@ -105,6 +112,22 @@ pip install -r source/requirements.txt
 ```bash
 python main.py
 ```
+
+## 测试
+
+```bash
+python -m compileall main.py source tests
+python -m unittest discover -s tests
+```
+
+当前测试覆盖了解析器、批处理去重、Excel 导出、配置读写、PDF 文件校验、文本提取 fallback 和自动 OCR 复核逻辑。真实 OCR 与完整打包验证仍建议作为手动或发布前检查。
+
+## 版本与 GitHub 管理
+
+- 版本管理规则见 [docs/VERSIONING.md](docs/VERSIONING.md)。
+- GitHub 首页、Issue、PR、Actions 和 Release 维护规则见 [docs/GITHUB_MANAGEMENT.md](docs/GITHUB_MANAGEMENT.md)。
+- 主要变更记录见 [CHANGELOG.md](CHANGELOG.md)。
+- 本仓库使用 PR 合并到 `main`，正式发布包通过 GitHub Releases 分发。
 
 ## 运行方式说明
 
@@ -177,6 +200,16 @@ Windows：
 - 主窗口：[source/ui/main_window.py](source/ui/main_window.py)
 - 解析服务：[source/services/invoice_service.py](source/services/invoice_service.py)
 - Excel 导出：[source/exporters/excel_exporter.py](source/exporters/excel_exporter.py)
+
+## 分层约定
+
+- `ui`：只负责交互、提示和界面刷新。
+- `services`：编排导入、识别、去重、文件发现等流程。
+- `parsers`：只做文本提取和字段解析，不依赖界面。
+- `exporters`：只负责输出文件，并处理导出安全细节。
+- `utils`：无业务状态的通用工具。
+
+运行期未使用本地数据库；识别结果主要保存在内存中，用户主动导出时写入 Excel。日志和配置写入系统用户目录，项目目录内不保存用户运行数据。
 
 ## GitHub 发布建议
 

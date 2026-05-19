@@ -8,8 +8,14 @@ import site
 QT_API = ""
 
 try:
-    from PyQt6.QtCore import QFile, QThread, Qt, pyqtSignal as Signal
-    from PyQt6.QtGui import QAction, QDragEnterEvent, QDropEvent
+    from PyQt6.QtCore import QFile, QThread, Qt, QUrl, pyqtSignal as Signal
+    from PyQt6.QtGui import (
+        QAction,
+        QColor,
+        QDesktopServices,
+        QDragEnterEvent,
+        QDropEvent,
+    )
     from PyQt6.QtWidgets import (
         QAbstractItemView,
         QApplication,
@@ -24,6 +30,7 @@ try:
         QPushButton,
         QProgressBar,
         QSizePolicy,
+        QStackedWidget,
         QTableWidget,
         QTableWidgetItem,
         QTextEdit,
@@ -60,8 +67,14 @@ except ImportError:
 
     _bootstrap_pyside_runtime()
 
-    from PySide6.QtCore import QFile, QThread, Qt, Signal
-    from PySide6.QtGui import QAction, QDragEnterEvent, QDropEvent
+    from PySide6.QtCore import QFile, QThread, Qt, QUrl, Signal
+    from PySide6.QtGui import (
+        QAction,
+        QColor,
+        QDesktopServices,
+        QDragEnterEvent,
+        QDropEvent,
+    )
     from PySide6.QtWidgets import (
         QAbstractItemView,
         QApplication,
@@ -76,6 +89,7 @@ except ImportError:
         QPushButton,
         QProgressBar,
         QSizePolicy,
+        QStackedWidget,
         QTableWidget,
         QTableWidgetItem,
         QTextEdit,

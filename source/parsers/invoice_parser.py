@@ -42,11 +42,18 @@ class InvoiceParser:
             record.buyer_name,
             record.item_name,
         ]
-        record.parse_success = any(bool(value) for value in recognized_fields)
 
-        if compact and not record.parse_success:
-            preview = compact[:120]
-            record.append_remark(f"原文预览：{preview}")
+        # 发票号、金额和日期是后续去重、汇总、导出的核心字段。
+        # 不能只因为 OCR 识别到任意一个字段就把发票计为“成功”，否则
+        # 只有日期/项目名的严重缺失记录也会被用户误认为已完整识别。
+        record.parse_success = bool(
+            record.invoice_number
+            and record.total_amount is not None
+            and record.invoice_date
+        )
+
+        if compact and not any(bool(value) for value in recognized_fields):
+            record.append_remark("未从文本中识别到有效发票字段")
 
         return record
 
@@ -67,14 +74,15 @@ class InvoiceParser:
 
     def _extract_total_amount(self, text: str):
         normalized = clean_text(text)
+        amount_pattern = r"([-+]?[0-9][0-9.,]*)"
         patterns = [
-            r"价税合计[（(]小写[)）][:：]?\s*[¥￥]?\s*([0-9.,]+)",
-            r"价税合计[^¥￥0-9]{0,12}[¥￥]\s*([0-9.,]+)",
-            r"价税合计[^\n]{0,20}[（(]小写[)）][^0-9¥￥]*([0-9.,]+)",
-            r"[（(]小写[)）]\s*[¥￥]?\s*([0-9.,]+)",
-            r"小写[^0-9¥￥]{0,6}[¥￥]?\s*([0-9.,]+)",
-            r"小写[:：]?\s*[¥￥]?\s*([0-9.,]+)",
-            r"合计[:：]?\s*[¥￥]?\s*([0-9.,]+)",
+            rf"价税合计[（(]小写[)）][:：]?\s*[¥￥]?\s*{amount_pattern}",
+            rf"价税合计[^¥￥0-9-]{{0,12}}[¥￥]\s*{amount_pattern}",
+            rf"价税合计[^\n]{{0,20}}[（(]小写[)）][^0-9¥￥-]*{amount_pattern}",
+            rf"[（(]小写[)）]\s*[¥￥]?\s*{amount_pattern}",
+            rf"小写[^0-9¥￥-]{{0,6}}[¥￥]?\s*{amount_pattern}",
+            rf"小写[:：]?\s*[¥￥]?\s*{amount_pattern}",
+            rf"合计[:：]?\s*[¥￥]?\s*{amount_pattern}",
         ]
         for source in (text, normalized):
             for pattern in patterns:
@@ -165,6 +173,22 @@ class InvoiceParser:
         return self._sanitize_party_name(block_matched)
 
     def _extract_party_names_from_same_line(self, text: str) -> tuple[str, str] | None:
+        normalized = clean_text(text)
+        pair_patterns = [
+            r"(?:购买方信息|买方信息|购买方|购方)[^\n。]{0,50}?名称[:：]?\s*(.+?)\s+名称[:：]?\s*(.+?)(?=\s+(?:统一社会信用代码|纳税人识别号|项目名称|规格型号|下载次数|备注|$))",
+            r"(?:购买方信息|买方信息|购买方|购方)[\s\S]{0,120}?名称[:：]?\s*(.+?)(?=\s+(?:销售方信息|销售方|销方)[\s\S]{0,40}?名称[:：])[\s\S]{0,120}?(?:销售方信息|销售方|销方)[\s\S]{0,40}?名称[:：]?\s*(.+?)(?=\s+(?:统一社会信用代码|纳税人识别号|项目名称|规格型号|下载次数|备注|$))",
+            r"购\s+销\s+买\s+名称[:：]?\s*(.+?)\s+售\s+名称[:：]?\s*(.+?)(?=\s+方|\s+统一社会信用代码|\s+纳税人识别号|\s+项目名称|$)",
+        ]
+        for source in (normalized, text):
+            for pattern in pair_patterns:
+                match = re.search(pattern, source, re.IGNORECASE)
+                if not match:
+                    continue
+                buyer_name = self._sanitize_party_name(match.group(1))
+                seller_name = self._sanitize_party_name(match.group(2))
+                if buyer_name or seller_name:
+                    return buyer_name, seller_name
+
         for raw_line in text.splitlines():
             if raw_line.count("名称") < 2:
                 continue

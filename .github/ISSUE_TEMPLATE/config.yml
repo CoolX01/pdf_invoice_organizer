@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 使用与发布说明
+    url: https://github.com/CoolX01/pdf_invoice_organizer#readme
+    about: 提交问题前可先查看 README、版本说明和发布说明。
