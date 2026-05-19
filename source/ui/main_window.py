@@ -7,6 +7,7 @@ import shutil
 
 from qt_compat import (
     QAbstractItemView,
+    QColor,
     QFileDialog,
     QFile,
     QDragEnterEvent,
@@ -54,6 +55,8 @@ class MainWindow(QMainWindow):
         self.file_statuses: dict[str, str] = {}
         self.records: list[InvoiceRecord] = []
         self.analysis_completed = False
+        self.active_result_filter = "all"
+        self.filter_buttons: dict[str, QPushButton] = {}
         self.worker: AnalysisWorker | None = None
         self.last_exported_path: Path | None = None
         self.last_export_signature: tuple | None = None
@@ -194,6 +197,7 @@ class MainWindow(QMainWindow):
         title_row.addStretch(1)
 
         layout.addLayout(title_row)
+        layout.addLayout(self._build_filter_row())
 
         self.table = QTableWidget(0, len(PREVIEW_HEADERS))
         self.table.setHorizontalHeaderLabels(PREVIEW_HEADERS)
@@ -210,6 +214,32 @@ class MainWindow(QMainWindow):
             self.table.setColumnWidth(column, width)
         layout.addWidget(self.table, 1)
         return panel
+
+    def _build_filter_row(self) -> QHBoxLayout:
+        filter_row = QHBoxLayout()
+        filter_row.setSpacing(8)
+        filter_row.addWidget(QLabel("筛选："))
+
+        filter_specs = [
+            ("all", "全部"),
+            ("failed", "仅失败"),
+            ("review", "仅需复核"),
+            ("duplicate", "仅重复"),
+        ]
+        for filter_name, label in filter_specs:
+            button = QPushButton(label)
+            button.setObjectName("FilterButton")
+            button.setCheckable(True)
+            button.clicked.connect(lambda checked=False, name=filter_name: self._set_result_filter(name))
+            self.filter_buttons[filter_name] = button
+            filter_row.addWidget(button)
+
+        self.filter_status_label = QLabel("显示：0 / 0")
+        self.filter_status_label.setObjectName("HintLabel")
+        filter_row.addWidget(self.filter_status_label)
+        filter_row.addStretch(1)
+        self._refresh_filter_buttons()
+        return filter_row
 
     def _build_queue_panel(self) -> QWidget:
         panel = QFrame()
@@ -336,6 +366,7 @@ class MainWindow(QMainWindow):
         self.records.clear()
         self.analysis_completed = False
         self.table.setRowCount(0)
+        self._apply_result_filter()
         self.progress_bar.setValue(0)
         self.status_label.setText("状态：待命")
         self._update_total_amount_label([])
@@ -643,6 +674,7 @@ class MainWindow(QMainWindow):
             self.analysis_completed = False
             self.records = []
             self.table.setRowCount(0)
+            self._apply_result_filter()
             self._update_total_amount_label([])
             self._append_log(f"新增文件 {added_count} 个。")
         if duplicate_count:
@@ -750,6 +782,7 @@ class MainWindow(QMainWindow):
         self.table.setRowCount(0)
         for row_index, record in enumerate(records):
             self.table.insertRow(row_index)
+            background_color = self._row_background_color(record)
             values = [
                 str(record.index),
                 record.file_name,
@@ -765,11 +798,53 @@ class MainWindow(QMainWindow):
             for column_index, value in enumerate(values):
                 item = QTableWidgetItem(value)
                 item.setToolTip(value)
+                if background_color is not None:
+                    item.setBackground(background_color)
                 if column_index in (0, 2, 3, 4, 5):
                     item.setTextAlignment(
                         Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
                     )
                 self.table.setItem(row_index, column_index, item)
+        self._apply_result_filter()
+
+    def _set_result_filter(self, filter_name: str) -> None:
+        self.active_result_filter = filter_name
+        self._refresh_filter_buttons()
+        self._apply_result_filter()
+
+    def _refresh_filter_buttons(self) -> None:
+        for filter_name, button in self.filter_buttons.items():
+            button.setChecked(filter_name == self.active_result_filter)
+
+    def _apply_result_filter(self) -> None:
+        visible_count = 0
+        for row_index, record in enumerate(self.records):
+            visible = self._record_matches_filter(record)
+            self.table.setRowHidden(row_index, not visible)
+            if visible:
+                visible_count += 1
+        if hasattr(self, "filter_status_label"):
+            self.filter_status_label.setText(f"显示：{visible_count} / {len(self.records)}")
+
+    def _record_matches_filter(self, record: InvoiceRecord) -> bool:
+        if self.active_result_filter == "failed":
+            return not record.parse_success
+        if self.active_result_filter == "review":
+            return record.parse_success and self._needs_review(record)
+        if self.active_result_filter == "duplicate":
+            return self._is_duplicate_record(record)
+        return True
+
+    def _row_background_color(self, record: InvoiceRecord):
+        if record.duplicate_invoice_conflict:
+            return QColor("#FADBD8")
+        if not record.parse_success:
+            return QColor("#FDEDEC")
+        if record.duplicate_file or record.duplicate_invoice:
+            return QColor("#FFF2CC")
+        if self._needs_review(record):
+            return QColor("#FEF9E7")
+        return None
 
     def _refresh_file_queue(self) -> None:
         self.file_list_widget.clear()
@@ -807,10 +882,12 @@ class MainWindow(QMainWindow):
         )
 
     def _needs_review(self, record: InvoiceRecord) -> bool:
-        review_tokens = ("缺少", "失败", "疑似重复", "OCR 置信度偏低")
+        review_tokens = ("缺少", "失败", "疑似重复", "高风险", "异常", "OCR 置信度偏低")
         return any(token in record.remarks for token in review_tokens)
 
     def _record_status_label(self, record: InvoiceRecord) -> str:
+        if record.duplicate_invoice_conflict:
+            return "重复冲突"
         if record.duplicate_file:
             return "重复文件"
         if record.duplicate_invoice:
@@ -850,6 +927,7 @@ class MainWindow(QMainWindow):
         self.records = []
         self.analysis_completed = False
         self.table.setRowCount(0)
+        self._apply_result_filter()
         self.progress_bar.setValue(0)
         self.status_label.setText("状态：待命")
         self._update_total_amount_label([])
@@ -945,6 +1023,7 @@ class MainWindow(QMainWindow):
                 record.parse_success,
                 record.duplicate_file,
                 record.duplicate_invoice,
+                record.duplicate_invoice_conflict,
             )
             for record in self.records
         )
@@ -1143,6 +1222,16 @@ class MainWindow(QMainWindow):
             QPushButton#HeaderActionButton:hover {
                 background: #eef4f8;
                 border-color: #567183;
+            }
+            QPushButton#FilterButton {
+                min-height: 28px;
+                padding: 0 10px;
+                font-weight: 600;
+            }
+            QPushButton#FilterButton:checked {
+                color: #1f3442;
+                background: #dceaf2;
+                border: 2px solid #3d6f8e;
             }
             QPushButton#DangerActionButton {
                 font-weight: 600;

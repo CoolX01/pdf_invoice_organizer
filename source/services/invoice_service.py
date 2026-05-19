@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import date, datetime, timedelta
 import logging
 from pathlib import Path
 from typing import Callable, Optional
@@ -19,6 +20,8 @@ ProgressCallback = Optional[Callable[[int, int, str], None]]
 LogCallback = Optional[Callable[[str], None]]
 CancelCallback = Optional[Callable[[], bool]]
 DUPLICATE_INVOICE_REMARK_PREFIX = "疑似重复发票（发票号码重复："
+DUPLICATE_INVOICE_CONFLICT_REMARK_PREFIX = "高风险重复发票（发票号码相同但金额/日期/销售方不一致："
+FUTURE_DATE_TOLERANCE_DAYS = 7
 
 
 class InvoiceBatchProcessor:
@@ -160,6 +163,7 @@ class InvoiceBatchProcessor:
                 return record
 
             self.parser.parse(record, text)
+            self._validate_record_fields(record)
 
             if not record.parse_success:
                 record.append_remark("关键信息识别不完整")
@@ -209,7 +213,9 @@ class InvoiceBatchProcessor:
         for record in records:
             record.duplicate_file = False
             record.duplicate_invoice = False
+            record.duplicate_invoice_conflict = False
             record.remove_remark_prefix(DUPLICATE_INVOICE_REMARK_PREFIX)
+            record.remove_remark_prefix(DUPLICATE_INVOICE_CONFLICT_REMARK_PREFIX)
 
     @staticmethod
     def _group_records_by_file_hash(records: list[InvoiceRecord]) -> dict[str, list[InvoiceRecord]]:
@@ -243,6 +249,12 @@ class InvoiceBatchProcessor:
             if len(duplicate_records) <= 1:
                 continue
 
+            signatures = {
+                InvoiceBatchProcessor._invoice_duplicate_signature(record)
+                for record in duplicate_records
+            }
+            has_conflict = len(signatures) > 1
+
             for record in duplicate_records:
                 duplicate_targets = [
                     f"序号{other.index} 文件{other.file_name}"
@@ -254,6 +266,45 @@ class InvoiceBatchProcessor:
 
                 record.duplicate_invoice = True
                 duplicate_text = "、".join(duplicate_targets)
-                record.append_remark(
-                    f"{DUPLICATE_INVOICE_REMARK_PREFIX}与{duplicate_text}重复）"
-                )
+                if has_conflict:
+                    record.duplicate_invoice_conflict = True
+                    record.append_remark(
+                        f"{DUPLICATE_INVOICE_CONFLICT_REMARK_PREFIX}请重点复核，涉及{duplicate_text}）"
+                    )
+                else:
+                    record.append_remark(
+                        f"{DUPLICATE_INVOICE_REMARK_PREFIX}与{duplicate_text}重复）"
+                    )
+
+    @staticmethod
+    def _invoice_duplicate_signature(record: InvoiceRecord) -> tuple[object, ...]:
+        amount = round(record.total_amount, 2) if record.total_amount is not None else None
+        return (
+            amount,
+            clean_text(record.invoice_date),
+            clean_text(record.seller_name),
+        )
+
+    @staticmethod
+    def _validate_record_fields(record: InvoiceRecord) -> None:
+        if record.total_amount is not None and record.total_amount <= 0:
+            record.parse_success = False
+            record.append_remark("金额异常（应大于 0）")
+
+        if record.invoice_number:
+            normalized_invoice_number = clean_text(record.invoice_number).replace(" ", "")
+            if not normalized_invoice_number.isdigit() or not (8 <= len(normalized_invoice_number) <= 20):
+                record.parse_success = False
+                record.append_remark("发票号码格式异常")
+
+        if record.invoice_date:
+            try:
+                invoice_date = datetime.strptime(record.invoice_date, "%Y-%m-%d").date()
+            except ValueError:
+                record.parse_success = False
+                record.append_remark("开票日期格式异常")
+            else:
+                max_allowed_date = date.today() + timedelta(days=FUTURE_DATE_TOLERANCE_DAYS)
+                if invoice_date > max_allowed_date:
+                    record.parse_success = False
+                    record.append_remark("开票日期异常（晚于当前日期超过 7 天）")

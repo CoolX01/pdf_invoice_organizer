@@ -9,7 +9,7 @@ QT_API = ""
 
 try:
     from PyQt6.QtCore import QFile, QThread, Qt, pyqtSignal as Signal
-    from PyQt6.QtGui import QAction, QDragEnterEvent, QDropEvent
+    from PyQt6.QtGui import QAction, QColor, QDragEnterEvent, QDropEvent
     from PyQt6.QtWidgets import (
         QAbstractItemView,
         QApplication,
@@ -61,7 +61,7 @@ except ImportError:
     _bootstrap_pyside_runtime()
 
     from PySide6.QtCore import QFile, QThread, Qt, Signal
-    from PySide6.QtGui import QAction, QDragEnterEvent, QDropEvent
+    from PySide6.QtGui import QAction, QColor, QDragEnterEvent, QDropEvent
     from PySide6.QtWidgets import (
         QAbstractItemView,
         QApplication,

@@ -26,6 +26,7 @@ class InvoiceRecord:
     ocr_confidence: Optional[float] = None
     duplicate_file: bool = False
     duplicate_invoice: bool = False
+    duplicate_invoice_conflict: bool = False
     errors: list[str] = field(default_factory=list)
 
     def append_remark(self, message: str) -> None:
