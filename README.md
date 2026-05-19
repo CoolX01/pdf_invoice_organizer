@@ -33,12 +33,16 @@ python main.py
 
 - 批量导入 PDF 发票
 - 支持拖拽 PDF 到窗口
-- 优先直接提取 PDF 文本，必要时自动 OCR 兜底
-- 在 GUI 中预览解析结果、总金额和重复组数
+- 导入时校验 PDF 后缀、文件大小和 PDF 文件头，跳过异常文件
+- 优先直接提取 PDF 文本，必要时自动 OCR 兜底，默认最多 OCR 前 10 页
+- 在 GUI 中预览解析结果、状态、失败/复核原因、总金额和重复组数
 - 支持重复文件识别、重复发票号码标记
-- 支持从结果中移除重复项
+- 支持从结果中移除重复项；也可在二次确认后将本地重复文件移到系统回收站/废纸篓
 - 支持导出 `.xlsx`
+- 导出前会提示已有文件覆盖风险；覆盖时会先备份原 Excel
 - 预留模板导出能力
+
+> 当前版本重点是“识别 + 预览 + Excel 汇总”。PDF 原文件的自动重命名、复制归档目录、归档后删除原文件等流程尚未作为默认功能开放；如需启用这类高风险操作，建议先做“预览重命名结果 → 冲突检测 → 复制校验 → 再人工确认”的安全流程。
 
 ## 仓库结构
 
@@ -105,6 +109,15 @@ pip install -r source/requirements.txt
 ```bash
 python main.py
 ```
+
+## 测试
+
+```bash
+python -m compileall main.py source tests
+python -m unittest discover -s tests
+```
+
+当前测试覆盖了解析器、批处理去重、Excel 导出、配置读写、PDF 文件校验和文本提取 fallback。真实 OCR 与完整打包验证仍建议作为手动或发布前检查。
 
 ## 运行方式说明
 
@@ -177,6 +190,16 @@ Windows：
 - 主窗口：[source/ui/main_window.py](source/ui/main_window.py)
 - 解析服务：[source/services/invoice_service.py](source/services/invoice_service.py)
 - Excel 导出：[source/exporters/excel_exporter.py](source/exporters/excel_exporter.py)
+
+## 分层约定
+
+- `ui`：只负责交互、提示和界面刷新。
+- `services`：编排导入、识别、去重、文件发现等流程。
+- `parsers`：只做文本提取和字段解析，不依赖界面。
+- `exporters`：只负责输出文件，并处理导出安全细节。
+- `utils`：无业务状态的通用工具。
+
+运行期未使用本地数据库；识别结果主要保存在内存中，用户主动导出时写入 Excel。日志和配置写入系统用户目录，项目目录内不保存用户运行数据。
 
 ## GitHub 发布建议
 

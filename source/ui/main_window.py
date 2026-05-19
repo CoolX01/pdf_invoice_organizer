@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 import logging
 from pathlib import Path
+import shutil
 
 from qt_compat import (
     QAbstractItemView,
@@ -30,11 +31,13 @@ from qt_compat import (
 
 from exporters.excel_exporter import ExcelExporter
 from models.invoice_record import InvoiceRecord
+from services.file_selection_service import discover_pdf_files
 from services.invoice_service import InvoiceBatchProcessor
 from ui.workers import AnalysisWorker
 from utils.config import AppConfig
 from utils.constants import PREVIEW_HEADERS
-from utils.file_utils import desktop_dir, is_pdf_file
+from utils.file_utils import desktop_dir, is_pdf_file, validate_pdf_file
+from utils.logging_utils import safe_log_path
 
 logger = logging.getLogger(__name__)
 
@@ -60,8 +63,6 @@ class MainWindow(QMainWindow):
         self.setAcceptDrops(True)
 
         self.output_path = self._initial_output_path()
-        self.template_path = None
-
         self._build_ui()
         self._refresh_button_states()
         self._append_log("软件已启动，可添加 PDF 文件开始使用。")
@@ -102,11 +103,15 @@ class MainWindow(QMainWindow):
         button_row = QHBoxLayout()
         button_row.setSpacing(8)
 
+        self.file_button = QPushButton("选择 PDF 文件")
+        self.file_button.clicked.connect(self.choose_files)
+        button_row.addWidget(self.file_button)
+
         self.folder_button = QPushButton("选择文件夹")
         self.folder_button.clicked.connect(self.choose_folder)
         button_row.addWidget(self.folder_button)
 
-        self.output_button = QPushButton("输出路径选择")
+        self.output_button = QPushButton("更改导出位置")
         self.output_button.clicked.connect(self.choose_output_path)
         button_row.addWidget(self.output_button)
 
@@ -129,7 +134,7 @@ class MainWindow(QMainWindow):
         self.output_path_label.setWordWrap(True)
         layout.addWidget(self.output_path_label)
 
-        hint = QLabel("支持选择文件夹导入，也支持直接把 PDF 文件拖拽到窗口中。")
+        hint = QLabel("可选择 PDF 文件、选择文件夹，或直接把 PDF 文件拖拽到窗口中。")
         hint.setObjectName("HintLabel")
         layout.addWidget(hint)
         return panel
@@ -149,24 +154,29 @@ class MainWindow(QMainWindow):
         self.start_button.clicked.connect(self.start_analysis)
         title_row.addWidget(self.start_button)
 
+        self.cancel_button = QPushButton("取消分析")
+        self.cancel_button.setObjectName("HeaderActionButton")
+        self.cancel_button.clicked.connect(self.cancel_analysis)
+        title_row.addWidget(self.cancel_button)
+
         title = QLabel("解析结果预览")
         title.setObjectName("SectionTitle")
         title_row.addWidget(title)
 
-        self.total_amount_label = QLabel("总金额：0.00 元")
+        self.total_amount_label = QLabel("总金额：全部 0.00 / 去重 0.00 元")
         self.total_amount_label.setObjectName("AmountSummary")
         title_row.addWidget(self.total_amount_label)
 
-        self.duplicate_count_label = QLabel("重复组数：0")
+        self.duplicate_count_label = QLabel("相同文件：0 组 / 相同票号：0 组")
         self.duplicate_count_label.setObjectName("AmountSummary")
         title_row.addWidget(self.duplicate_count_label)
 
-        self.remove_duplicates_button = QPushButton("删除重复文件")
+        self.remove_duplicates_button = QPushButton("从结果中移除重复项")
         self.remove_duplicates_button.setObjectName("HeaderActionButton")
         self.remove_duplicates_button.clicked.connect(self.remove_duplicate_files)
         title_row.addWidget(self.remove_duplicates_button)
 
-        self.delete_local_duplicates_button = QPushButton("删除本地重复文件")
+        self.delete_local_duplicates_button = QPushButton("移到废纸篓/回收站")
         self.delete_local_duplicates_button.setObjectName("DangerActionButton")
         self.delete_local_duplicates_button.clicked.connect(self.delete_duplicate_local_files)
         title_row.addWidget(self.delete_local_duplicates_button)
@@ -195,7 +205,7 @@ class MainWindow(QMainWindow):
         self.table.horizontalHeader().setStretchLastSection(True)
         header = self.table.horizontalHeader()
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
-        default_widths = [70, 220, 180, 120, 110, 220, 220, 260]
+        default_widths = [70, 220, 100, 180, 120, 110, 220, 220, 260, 360]
         for column, width in enumerate(default_widths):
             self.table.setColumnWidth(column, width)
         layout.addWidget(self.table, 1)
@@ -264,13 +274,12 @@ class MainWindow(QMainWindow):
             return
 
         folder_path = Path(folder)
-        file_paths = sorted(
-            [path for path in folder_path.rglob("*") if is_pdf_file(path)],
-            key=lambda item: item.name.lower(),
-        )
+        discovery = discover_pdf_files(folder_path)
+        file_paths = discovery.files
         if not file_paths:
             self._warn("提示", "所选文件夹中未找到 PDF 文件。")
             return
+        self._append_discovery_messages(discovery.skipped, discovery.errors)
 
         self.target_folder = folder_path
         self._set_target_folder_files(file_paths)
@@ -306,6 +315,20 @@ class MainWindow(QMainWindow):
             self._warn("提示", "分析进行中，暂不支持清空列表。")
             return
 
+        if self.selected_files or self.records:
+            message = "将清空当前文件列表和识别结果，不会删除本地 PDF 文件。"
+            if self.records and self.last_export_signature != self._current_records_signature():
+                message += "\n\n当前识别结果可能尚未导出。"
+            reply = QMessageBox.question(
+                self,
+                "确认清空列表",
+                f"{message}\n\n是否继续？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
         self.selected_files.clear()
         self.target_folder = None
         self.target_folder_files.clear()
@@ -336,11 +359,12 @@ class MainWindow(QMainWindow):
 
         reply = QMessageBox.question(
             self,
-            "删除重复文件",
+            "从结果中移除重复项",
             (
                 f"检测到 {duplicate_group_count} 组相同 PDF 内容，"
-                f"将删除 {duplicate_remove_count} 个重复文件，"
-                "每组仅保留第一份。\n\n是否继续？"
+                f"将从当前结果中移除 {duplicate_remove_count} 个重复项，"
+                "每组仅保留第一份。\n\n"
+                "此操作不会删除本地 PDF 原文件。\n\n是否继续？"
             ),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
@@ -354,41 +378,55 @@ class MainWindow(QMainWindow):
         if len(removed_records) > 5:
             preview_names = f"{preview_names} 等 {len(removed_records)} 个文件"
         self._append_log(
-            f"已删除 {duplicate_remove_count} 个重复文件，保留 {len(kept_records)} 个文件。"
+            f"已从结果中移除 {duplicate_remove_count} 个重复项，保留 {len(kept_records)} 个文件。本地 PDF 未删除。"
         )
         if preview_names:
             self._append_log(f"已移除的文件：{preview_names}")
 
         QMessageBox.information(
             self,
-            "删除完成",
-            f"已删除 {duplicate_remove_count} 个重复文件，当前保留 {len(kept_records)} 个文件。",
+            "移除完成",
+            f"已从结果中移除 {duplicate_remove_count} 个重复项，当前保留 {len(kept_records)} 个文件。\n本地 PDF 原文件未删除。",
         )
 
     def delete_duplicate_local_files(self) -> None:
         if not self.analysis_completed or not self.records:
-            self._warn("提示", "请先完成分析，再删除本地重复文件。")
+            self._warn("提示", "请先完成分析，再移动本地重复文件。")
             return
 
         duplicate_group_count = InvoiceBatchProcessor.count_duplicate_file_groups(self.records)
         _, duplicate_records = InvoiceBatchProcessor.split_duplicate_file_records(self.records)
         duplicate_remove_count = len(duplicate_records)
         if duplicate_remove_count <= 0:
-            self._warn("提示", "当前没有可删除的本地重复文件。")
+            self._warn("提示", "当前没有可移动的本地重复文件。")
             return
+
+        if self.records and self.last_export_signature != self._current_records_signature():
+            reply = QMessageBox.question(
+                self,
+                "建议先导出备份",
+                (
+                    "当前识别结果可能尚未导出。建议先导出 Excel 作为备份，"
+                    "再移动本地 PDF 文件。\n\n是否仍要继续移动本地重复文件？"
+                ),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
 
         message_box = QMessageBox(self)
         message_box.setIcon(QMessageBox.Icon.Warning)
-        message_box.setWindowTitle("删除本地重复文件")
+        message_box.setWindowTitle("移动本地重复文件")
         message_box.setText(
             (
                 f"检测到 {duplicate_group_count} 组相同 PDF 内容，"
                 f"将把 {duplicate_remove_count} 个本地重复文件移到系统回收站/废纸篓，"
-                "每组仅保留第一份。"
+                "每组仅保留第一份。此操作会移动实际本地 PDF 原文件，不只是从列表移除。"
             )
         )
         message_box.setInformativeText(
-            "该操作会同时把这些文件从当前分析结果中移除。展开“显示详情”可查看完整删除清单。"
+            "该操作会同时把这些文件从当前分析结果中移除。展开“显示详情”可查看完整文件清单。"
         )
         message_box.setDetailedText(self._build_local_delete_detail_text(duplicate_records))
         message_box.setStandardButtons(
@@ -413,9 +451,9 @@ class MainWindow(QMainWindow):
             failed_messages.append(f"{record.file_name}：{error_text}")
 
         if not removed_ids:
-            error_preview = "；".join(failed_messages[:3]) if failed_messages else "没有文件被删除。"
-            self._warn("删除失败", error_preview)
-            self._append_log(f"删除本地重复文件失败：{error_preview}")
+            error_preview = "；".join(failed_messages[:3]) if failed_messages else "没有文件被移动。"
+            self._warn("移动失败", error_preview)
+            self._append_log(f"移动本地重复文件失败：{error_preview}")
             return
 
         remaining_records = [record for record in self.records if id(record) not in removed_ids]
@@ -428,26 +466,26 @@ class MainWindow(QMainWindow):
             removed_preview = "、".join(removed_names[:5])
             if len(removed_names) > 5:
                 removed_preview = f"{removed_preview} 等 {len(removed_names)} 个文件"
-            self._append_log(f"已删除的本地文件：{removed_preview}")
+            self._append_log(f"已移动到废纸篓/回收站的本地文件：{removed_preview}")
 
         if failed_messages:
             failure_preview = "；".join(failed_messages[:3])
             if len(failed_messages) > 3:
-                failure_preview = f"{failure_preview}；另有 {len(failed_messages) - 3} 个文件删除失败"
-            self._append_log(f"部分文件删除失败：{failure_preview}")
+                failure_preview = f"{failure_preview}；另有 {len(failed_messages) - 3} 个文件移动失败"
+            self._append_log(f"部分文件移动失败：{failure_preview}")
             QMessageBox.warning(
                 self,
-                "部分删除成功",
+                "部分移动成功",
                 (
-                    f"已删除 {len(removed_names)} 个本地重复文件，"
-                    f"另有 {len(failed_messages)} 个删除失败。\n\n{failure_preview}"
+                    f"已移动 {len(removed_names)} 个本地重复文件，"
+                    f"另有 {len(failed_messages)} 个移动失败。\n\n{failure_preview}"
                 ),
             )
             return
 
         QMessageBox.information(
             self,
-            "删除完成",
+            "移动完成",
             f"已将 {len(removed_names)} 个本地重复文件移到系统回收站/废纸篓。",
         )
 
@@ -470,20 +508,32 @@ class MainWindow(QMainWindow):
         for path in self.selected_files:
             self.file_statuses[self._path_key(path)] = "排队中"
         self._refresh_file_queue()
-        self._refresh_button_states()
 
         options = {
             "ocr_enabled": bool(self.config.get("ocr_enabled", True)),
             "ocr_confidence_threshold": float(self.config.get("ocr_confidence_threshold", 0.75)),
             "max_preview_text_chars": int(self.config.get("max_preview_text_chars", 1200)),
             "invoice_title_source": str(self.config.get("invoice_title_source", "filename")),
+            "max_ocr_pages": int(self.config.get("max_ocr_pages", 10)),
+            "ocr_render_scale": float(self.config.get("ocr_render_scale", 2.0)),
+            "ocr_try_variants": bool(self.config.get("ocr_try_variants", True)),
         }
         self.worker = AnalysisWorker(self.selected_files[:], options)
         self.worker.progress_changed.connect(self._on_progress_changed)
         self.worker.log_emitted.connect(self._append_log)
         self.worker.finished_with_results.connect(self._on_analysis_finished)
+        self.worker.cancelled_with_results.connect(self._on_analysis_cancelled)
         self.worker.failed.connect(self._on_analysis_failed)
         self.worker.start()
+        self._refresh_button_states()
+
+    def cancel_analysis(self) -> None:
+        if not self.worker or not self.worker.isRunning():
+            return
+        self.worker.cancel()
+        self.cancel_button.setEnabled(False)
+        self.status_label.setText("状态：正在取消，等待当前文件处理结束")
+        self._append_log("已请求取消分析，当前文件处理结束后将停止。")
 
     def export_excel(self) -> None:
         if not self.analysis_completed:
@@ -510,10 +560,16 @@ class MainWindow(QMainWindow):
                     f"检测到导出后结果已变化，已自动生成新的输出文件：{output_path}"
                 )
 
+            output_path = self._resolve_export_output_path(output_path)
+            if output_path is None:
+                self._append_log("已取消 Excel 导出。")
+                return
+
+            template_path = self._configured_template_path()
             exported_path = self.exporter.export(
                 self.records,
                 output_path=output_path,
-                template_path=None,
+                template_path=template_path,
             )
             self.output_path = exported_path
             self.output_path_label.setText(f"输出路径：{self.output_path}")
@@ -524,7 +580,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self,
                 "Excel 已生成完成",
-                f"Excel 已成功生成：\n{exported_path}",
+                f"Excel 已成功生成：\n{exported_path}\n\n导出文件包含发票号码、金额、购销方等敏感信息，请妥善保存。",
             )
         except Exception as exc:
             logger.exception("Export failed")
@@ -559,9 +615,10 @@ class MainWindow(QMainWindow):
             self._warn("提示", "拖拽内容中未检测到 PDF 文件。")
 
     def _add_files(self, file_paths: list[Path]) -> None:
-        existing = {path.resolve() for path in self.selected_files}
+        existing = {Path(self._path_key(path)) for path in self.selected_files}
         added_count = 0
         duplicate_count = 0
+        invalid_count = 0
 
         for path in file_paths:
             try:
@@ -569,8 +626,10 @@ class MainWindow(QMainWindow):
             except OSError:
                 resolved = path
 
-            if not is_pdf_file(path):
-                self._append_log(f"已跳过非 PDF 文件：{path}")
+            valid, reason = validate_pdf_file(path)
+            if not valid:
+                invalid_count += 1
+                self._append_log(f"已跳过无效 PDF：{path.name}（{reason}）")
                 continue
             if resolved in existing:
                 duplicate_count += 1
@@ -588,6 +647,8 @@ class MainWindow(QMainWindow):
             self._append_log(f"新增文件 {added_count} 个。")
         if duplicate_count:
             self._append_log(f"发现重复导入文件 {duplicate_count} 个，已跳过。")
+        if invalid_count:
+            self._append_log(f"发现无效或不支持的 PDF {invalid_count} 个，已跳过。")
 
         self.file_count_label.setText(f"当前文件：{len(self.selected_files)}")
         self._refresh_file_queue()
@@ -597,9 +658,8 @@ class MainWindow(QMainWindow):
         percentage = 0 if total == 0 else int(current / total * 100)
         self.progress_bar.setValue(min(percentage, 100))
         self.status_label.setText(f"状态：{message}")
-        prefix = "正在处理："
-        if message.startswith(prefix):
-            current_name = message.removeprefix(prefix).strip()
+        if message.startswith("正在识别") and "：" in message:
+            current_name = message.rsplit("：", 1)[-1].strip()
             for path in self.selected_files:
                 key = self._path_key(path)
                 if path.name == current_name:
@@ -625,11 +685,52 @@ class MainWindow(QMainWindow):
 
         failed_count = sum(1 for item in records if not item.parse_success)
         success_count = len(records) - failed_count
-        self._append_log(f"分析结束：成功 {success_count} 条，失败 {failed_count} 条。")
+        review_count = sum(1 for item in records if self._needs_review(item) or self._is_duplicate_record(item))
+        self._append_log(
+            f"分析结束：核心字段完整 {success_count} 条，失败 {failed_count} 条，需复核 {review_count} 条。"
+        )
         QMessageBox.information(
             self,
             "分析完成",
-            f"已完成 {len(records)} 个文件的分析。\n成功：{success_count}\n失败：{failed_count}",
+            (
+                f"已完成 {len(records)} 个文件的分析。\n"
+                f"核心字段完整：{success_count}\n"
+                f"失败：{failed_count}\n"
+                f"需复核：{review_count}\n\n"
+                "请在结果表的“状态”和“备注/失败原因”列查看需复核项目。"
+            ),
+        )
+
+    def _on_analysis_cancelled(self, records: list[InvoiceRecord]) -> None:
+        self.worker = None
+        self.records = records
+        self.analysis_completed = bool(records)
+        self.status_label.setText("状态：分析已取消")
+        self._populate_table(records)
+        self._update_total_amount_label(records)
+        self._apply_record_statuses(records)
+        for path in self.selected_files:
+            key = self._path_key(path)
+            if key not in self.file_statuses:
+                self.file_statuses[key] = "未处理"
+            elif self.file_statuses[key] in ("排队中", "分析中"):
+                self.file_statuses[key] = "未处理"
+        self._refresh_file_queue()
+        self._refresh_button_states()
+
+        processed_count = len(records)
+        remaining_count = max(len(self.selected_files) - processed_count, 0)
+        self._append_log(
+            f"分析已取消：已处理 {processed_count} 个，未处理 {remaining_count} 个。"
+        )
+        QMessageBox.information(
+            self,
+            "分析已取消",
+            (
+                f"已处理：{processed_count} 个\n"
+                f"未处理：{remaining_count} 个\n\n"
+                "已处理结果仍保留，可导出已完成部分，或重新开始分析。"
+            ),
         )
 
     def _on_analysis_failed(self, message: str) -> None:
@@ -652,17 +753,19 @@ class MainWindow(QMainWindow):
             values = [
                 str(record.index),
                 record.file_name,
+                self._record_status_label(record),
                 record.invoice_number,
                 "" if record.total_amount is None else f"{record.total_amount:.2f}",
                 record.invoice_date,
                 record.seller_name,
                 record.buyer_name,
                 record.item_name,
+                record.remarks,
             ]
             for column_index, value in enumerate(values):
                 item = QTableWidgetItem(value)
                 item.setToolTip(value)
-                if column_index in (0, 2, 3, 4):
+                if column_index in (0, 2, 3, 4, 5):
                     item.setTextAlignment(
                         Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
                     )
@@ -680,34 +783,52 @@ class MainWindow(QMainWindow):
     def _apply_record_statuses(self, records: list[InvoiceRecord]) -> None:
         for record in records:
             status = "已完成"
-            if self._needs_review(record):
+            if not record.parse_success:
+                status = "失败"
+            elif self._needs_review(record) or self._is_duplicate_record(record):
                 status = "需复核"
             self.file_statuses[self._path_key(record.file_path)] = status
         self._refresh_file_queue()
 
     def _update_total_amount_label(self, records: list[InvoiceRecord]) -> None:
         total_amount = sum(record.total_amount or 0 for record in records)
-        duplicate_count = self._count_duplicate_groups(records)
-        self.total_amount_label.setText(f"总金额：{total_amount:.2f} 元")
-        self.duplicate_count_label.setText(f"重复组数：{duplicate_count}")
+        suggested_amount = sum(
+            record.total_amount or 0
+            for record in records
+            if record.parse_success and not self._is_duplicate_record(record)
+        )
+        duplicate_file_count = InvoiceBatchProcessor.count_duplicate_file_groups(records)
+        duplicate_invoice_count = self._count_duplicate_invoice_groups(records)
+        self.total_amount_label.setText(
+            f"总金额：全部 {total_amount:.2f} / 去重 {suggested_amount:.2f} 元"
+        )
+        self.duplicate_count_label.setText(
+            f"相同文件：{duplicate_file_count} 组 / 相同票号：{duplicate_invoice_count} 组"
+        )
 
     def _needs_review(self, record: InvoiceRecord) -> bool:
         review_tokens = ("缺少", "失败", "疑似重复", "OCR 置信度偏低")
         return any(token in record.remarks for token in review_tokens)
 
+    def _record_status_label(self, record: InvoiceRecord) -> str:
+        if record.duplicate_file:
+            return "重复文件"
+        if record.duplicate_invoice:
+            return "疑似重复"
+        if not record.parse_success:
+            return "失败"
+        if self._needs_review(record):
+            return "需复核"
+        return "成功"
+
     def _is_duplicate_record(self, record: InvoiceRecord) -> bool:
         return bool(record.duplicate_invoice or record.duplicate_file)
 
-    def _count_duplicate_groups(self, records: list[InvoiceRecord]) -> int:
+    def _count_duplicate_invoice_groups(self, records: list[InvoiceRecord]) -> int:
         duplicate_groups: set[str] = set()
         for record in records:
             if record.duplicate_invoice and record.invoice_number:
-                duplicate_groups.add(f"invoice:{record.invoice_number.strip()}")
-                continue
-
-            if record.duplicate_file and record.file_hash:
-                duplicate_groups.add(f"file:{record.file_hash}")
-
+                duplicate_groups.add(record.invoice_number.strip())
         return len(duplicate_groups)
 
     def _replace_records(self, records: list[InvoiceRecord]) -> None:
@@ -747,10 +868,9 @@ class MainWindow(QMainWindow):
             self.target_folder_files.clear()
             return
 
-        file_paths = sorted(
-            [path for path in folder_path.rglob("*") if is_pdf_file(path)],
-            key=lambda item: item.name.lower(),
-        )
+        discovery = discover_pdf_files(folder_path)
+        file_paths = discovery.files
+        self._append_discovery_messages(discovery.skipped, discovery.errors)
         previous_keys = {self._path_key(path) for path in self.target_folder_files}
         self._set_target_folder_files(file_paths)
         refreshed_keys = {self._path_key(path) for path in self.target_folder_files}
@@ -778,14 +898,35 @@ class MainWindow(QMainWindow):
         self.selected_files = merged_files
         self.file_count_label.setText(f"当前文件：{len(self.selected_files)}")
 
+    def _append_discovery_messages(
+        self,
+        skipped: list[tuple[Path, str]],
+        errors: list[str],
+    ) -> None:
+        if skipped:
+            preview = "；".join(f"{path.name}（{reason}）" for path, reason in skipped[:3])
+            if len(skipped) > 3:
+                preview = f"{preview}；另有 {len(skipped) - 3} 个文件"
+            self._append_log(f"已跳过 {len(skipped)} 个无效或不支持的 PDF：{preview}")
+        for error in errors[:3]:
+            self._append_log(f"扫描目录时遇到问题：{error}")
+
     def _build_local_delete_detail_text(self, duplicate_records: list[InvoiceRecord]) -> str:
         if not duplicate_records:
-            return "当前没有可删除的本地重复文件。"
+            return "当前没有可移动的本地重复文件。"
 
         lines: list[str] = []
         for index, record in enumerate(duplicate_records, start=1):
             lines.append(f"{index}. {record.file_name}")
             lines.append(f"   路径：{record.file_path}")
+            if record.file_hash:
+                lines.append(f"   文件指纹：{record.file_hash[:12]}…")
+            summary_parts = [
+                f"发票号码：{record.invoice_number or '未识别'}",
+                f"金额：{record.total_amount if record.total_amount is not None else '未识别'}",
+                f"日期：{record.invoice_date or '未识别'}",
+            ]
+            lines.append(f"   {'；'.join(summary_parts)}")
         return "\n".join(lines)
 
     def _current_records_signature(self) -> tuple:
@@ -801,6 +942,9 @@ class MainWindow(QMainWindow):
                 record.buyer_name,
                 record.item_name,
                 record.remarks,
+                record.parse_success,
+                record.duplicate_file,
+                record.duplicate_invoice,
             )
             for record in self.records
         )
@@ -818,6 +962,50 @@ class MainWindow(QMainWindow):
             and current_signature != self.last_export_signature
         )
 
+    def _resolve_export_output_path(self, output_path: Path) -> Path | None:
+        if not output_path.exists():
+            return output_path
+
+        message_box = QMessageBox(self)
+        message_box.setIcon(QMessageBox.Icon.Warning)
+        message_box.setWindowTitle("导出文件已存在")
+        message_box.setText(f"目标 Excel 文件已存在：\n{output_path}")
+        message_box.setInformativeText(
+            "为避免覆盖已有汇总表，建议另存为新文件。若选择覆盖，软件会先备份原文件。"
+        )
+        overwrite_button = message_box.addButton("覆盖并备份", QMessageBox.ButtonRole.AcceptRole)
+        new_file_button = message_box.addButton("另存为新文件", QMessageBox.ButtonRole.ActionRole)
+        cancel_button = message_box.addButton("取消", QMessageBox.ButtonRole.RejectRole)
+        message_box.setDefaultButton(new_file_button)
+        message_box.exec()
+
+        clicked_button = message_box.clickedButton()
+        if clicked_button == cancel_button:
+            return None
+        if clicked_button == new_file_button:
+            new_path = self._build_unique_export_path(output_path)
+            self.output_path = new_path
+            self.output_path_label.setText(f"输出路径：{self.output_path}")
+            self._append_log(f"目标文件已存在，已改为另存：{new_path}")
+            return new_path
+        if clicked_button == overwrite_button:
+            backup_path = self._build_backup_path(output_path)
+            shutil.copy2(output_path, backup_path)
+            self._append_log(f"覆盖前已备份原 Excel：{backup_path}")
+            return output_path
+
+        return None
+
+    def _configured_template_path(self) -> Path | None:
+        configured_path = str(self.config.get("excel_template_path", "")).strip()
+        if not configured_path:
+            return None
+        template_path = Path(configured_path)
+        if template_path.exists():
+            return template_path
+        self._append_log(f"配置的 Excel 模板不存在，已使用默认导出格式：{template_path}")
+        return None
+
     def _build_unique_export_path(self, output_path: Path) -> Path:
         suffix = output_path.suffix or ".xlsx"
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -830,12 +1018,24 @@ class MainWindow(QMainWindow):
             counter += 1
         return candidate
 
+    def _build_backup_path(self, output_path: Path) -> Path:
+        suffix = output_path.suffix or ".xlsx"
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        candidate = output_path.with_name(f"{output_path.stem}_backup_{timestamp}{suffix}")
+        counter = 2
+        while candidate.exists():
+            candidate = output_path.with_name(
+                f"{output_path.stem}_backup_{timestamp}_{counter}{suffix}"
+            )
+            counter += 1
+        return candidate
+
     def _move_file_to_trash(self, path: Path) -> tuple[bool, str]:
         try:
             result = QFile.moveToTrash(str(path))
-        except Exception as exc:
-            logger.exception("Failed to move file to trash: %s", path)
-            return False, str(exc)
+        except Exception:
+            logger.warning("Failed to move file to trash: %s", safe_log_path(path))
+            return False, "移动到废纸篓/回收站失败"
 
         if isinstance(result, tuple):
             success = bool(result[0])
@@ -859,6 +1059,7 @@ class MainWindow(QMainWindow):
         has_files = bool(self.selected_files)
         running = bool(self.worker and self.worker.isRunning())
         self.start_button.setEnabled(has_files and not running)
+        self.cancel_button.setEnabled(running)
         self.export_button.setEnabled(self.analysis_completed and bool(self.records) and not running)
         duplicate_file_groups = (
             InvoiceBatchProcessor.count_duplicate_file_groups(self.records)
@@ -872,6 +1073,7 @@ class MainWindow(QMainWindow):
             self.analysis_completed and duplicate_file_groups > 0 and not running
         )
         self.clear_button.setEnabled(not running)
+        self.file_button.setEnabled(not running)
         self.folder_button.setEnabled(not running)
         self.output_button.setEnabled(not running)
 

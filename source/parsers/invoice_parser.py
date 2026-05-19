@@ -42,11 +42,18 @@ class InvoiceParser:
             record.buyer_name,
             record.item_name,
         ]
-        record.parse_success = any(bool(value) for value in recognized_fields)
 
-        if compact and not record.parse_success:
-            preview = compact[:120]
-            record.append_remark(f"原文预览：{preview}")
+        # 发票号、金额和日期是后续去重、汇总、导出的核心字段。
+        # 不能只因为 OCR 识别到任意一个字段就把发票计为“成功”，否则
+        # 只有日期/项目名的严重缺失记录也会被用户误认为已完整识别。
+        record.parse_success = bool(
+            record.invoice_number
+            and record.total_amount is not None
+            and record.invoice_date
+        )
+
+        if compact and not any(bool(value) for value in recognized_fields):
+            record.append_remark("未从文本中识别到有效发票字段")
 
         return record
 

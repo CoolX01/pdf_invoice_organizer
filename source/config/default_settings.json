@@ -4,5 +4,8 @@
   "invoice_title_source": "filename",
   "ocr_enabled": true,
   "ocr_confidence_threshold": 0.75,
-  "max_preview_text_chars": 1200
+  "max_preview_text_chars": 1200,
+  "max_ocr_pages": 10,
+  "ocr_render_scale": 2.0,
+  "ocr_try_variants": true
 }

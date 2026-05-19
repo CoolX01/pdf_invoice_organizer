@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import logging
 from pathlib import Path
 from typing import Callable, Optional
@@ -10,11 +11,13 @@ from parsers.pdf_text_extractor import PDFTextExtractor
 from services.ocr_service import OCRService
 from utils.file_utils import compute_file_hash
 from utils.formatters import clean_text
+from utils.logging_utils import safe_log_path
 
 logger = logging.getLogger(__name__)
 
 ProgressCallback = Optional[Callable[[int, int, str], None]]
 LogCallback = Optional[Callable[[str], None]]
+CancelCallback = Optional[Callable[[], bool]]
 DUPLICATE_INVOICE_REMARK_PREFIX = "疑似重复发票（发票号码重复："
 
 
@@ -25,6 +28,9 @@ class InvoiceBatchProcessor:
         ocr_confidence_threshold: float = 0.75,
         max_preview_text_chars: int = 1200,
         invoice_title_source: str = "filename",
+        max_ocr_pages: int = 10,
+        ocr_render_scale: float = 2.0,
+        ocr_try_variants: bool = True,
     ) -> None:
         self.ocr_confidence_threshold = ocr_confidence_threshold
         self.max_preview_text_chars = max_preview_text_chars
@@ -32,6 +38,9 @@ class InvoiceBatchProcessor:
         self.extractor = PDFTextExtractor(
             ocr_service=self.ocr_service,
             enable_ocr=enable_ocr,
+            max_ocr_pages=max_ocr_pages,
+            ocr_render_scale=ocr_render_scale,
+            ocr_try_variants=ocr_try_variants,
         )
         self.parser = InvoiceParser(invoice_title_source=invoice_title_source)
 
@@ -40,19 +49,28 @@ class InvoiceBatchProcessor:
         file_paths: list[Path],
         progress_callback: ProgressCallback = None,
         log_callback: LogCallback = None,
+        should_cancel: CancelCallback = None,
     ) -> list[InvoiceRecord]:
         file_hash_map: dict[str, Path] = {}
         tasks = self._build_tasks(file_paths, file_hash_map)
         records: list[InvoiceRecord] = []
+        parsed_by_hash: dict[str, InvoiceRecord] = {}
         duplicate_file_count = sum(1 for task in tasks if task.duplicate_of is not None)
 
         total = len(tasks)
         for index, task in enumerate(tasks, start=1):
-            if progress_callback:
-                progress_callback(index - 1, total, f"正在处理：{task.path.name}")
+            if should_cancel and should_cancel():
+                if log_callback:
+                    log_callback(f"分析已取消：已处理 {len(records)} 个，未处理 {total - len(records)} 个。")
+                break
 
-            record = self._process_single(task, index)
+            if progress_callback:
+                progress_callback(index - 1, total, f"正在识别 {index}/{total}：{task.path.name}")
+
+            record = self._process_single(task, index, parsed_by_hash)
             records.append(record)
+            if record.file_hash and record.file_hash not in parsed_by_hash:
+                parsed_by_hash[record.file_hash] = record
 
             if log_callback:
                 status = "成功" if record.parse_success else "失败"
@@ -60,7 +78,7 @@ class InvoiceBatchProcessor:
 
         self.refresh_duplicate_annotations(records)
 
-        if progress_callback:
+        if progress_callback and not (should_cancel and should_cancel()):
             progress_callback(total, total, "分析完成")
 
         success_count = sum(1 for item in records if item.parse_success)
@@ -80,14 +98,33 @@ class InvoiceBatchProcessor:
                 file_hash = compute_file_hash(path)
                 duplicate_of = file_hash_map.get(file_hash)
                 file_hash_map.setdefault(file_hash, path)
-            except Exception as exc:
-                logger.exception("Failed to hash file %s", path)
+            except Exception:
+                logger.warning("Failed to hash file %s", safe_log_path(path))
                 file_hash = ""
                 duplicate_of = None
             tasks.append(FileTask(path=path, duplicate_of=duplicate_of, file_hash=file_hash))
         return tasks
 
-    def _process_single(self, task: FileTask, index: int) -> InvoiceRecord:
+    def _process_single(
+        self,
+        task: FileTask,
+        index: int,
+        parsed_by_hash: Optional[dict[str, InvoiceRecord]] = None,
+    ) -> InvoiceRecord:
+        if task.duplicate_of is not None and task.file_hash and parsed_by_hash:
+            cached_record = parsed_by_hash.get(task.file_hash)
+            if cached_record is not None:
+                record = replace(
+                    cached_record,
+                    file_path=task.path,
+                    file_name=task.path.name,
+                    index=index,
+                    duplicate_file=True,
+                    errors=list(cached_record.errors),
+                )
+                record.append_remark("相同 PDF 内容，已复用首次识别结果")
+                return record
+
         record = InvoiceRecord(
             file_path=task.path,
             file_name=task.path.name,
@@ -126,9 +163,9 @@ class InvoiceBatchProcessor:
 
             if not record.parse_success:
                 record.append_remark("关键信息识别不完整")
-        except Exception as exc:
-            logger.exception("Failed to process %s", task.path)
-            record.mark_error(f"识别失败：{exc}")
+        except Exception:
+            logger.warning("Failed to process %s", safe_log_path(task.path))
+            record.mark_error("识别失败：PDF 解析或 OCR 处理异常")
 
         return record
 
@@ -196,6 +233,8 @@ class InvoiceBatchProcessor:
     def _mark_duplicate_invoices(records: list[InvoiceRecord]) -> None:
         grouped_records: dict[str, list[InvoiceRecord]] = {}
         for record in records:
+            if record.duplicate_file:
+                continue
             normalized_invoice_number = clean_text(record.invoice_number).replace(" ", "")
             if normalized_invoice_number:
                 grouped_records.setdefault(normalized_invoice_number, []).append(record)

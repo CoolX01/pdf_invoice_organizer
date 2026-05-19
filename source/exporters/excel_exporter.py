@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from copy import copy
 from datetime import datetime
+import os
 from pathlib import Path
+import tempfile
 from typing import Optional
 
 from openpyxl import Workbook, load_workbook
@@ -15,6 +17,7 @@ from utils.constants import EXCEL_HEADERS
 
 class ExcelExporter:
     DUPLICATE_ROW_FILL = PatternFill("solid", fgColor="FFF2CC")
+    FORMULA_PREFIXES = ("=", "+", "-", "@")
 
     def export(
         self,
@@ -33,7 +36,7 @@ class ExcelExporter:
             sheet.title = "发票汇总"
             self._write_to_default_sheet(sheet, records)
 
-        workbook.save(output_path)
+        self._save_workbook_atomically(workbook, output_path)
         return output_path
 
     def _write_to_default_sheet(self, sheet, records: list[InvoiceRecord]) -> None:
@@ -115,7 +118,7 @@ class ExcelExporter:
             values = self._record_to_row(record)
             for header, value in values.items():
                 column_index = header_map[header]
-                cell = sheet.cell(row=row_index, column=column_index, value=value)
+                cell = sheet.cell(row=row_index, column=column_index, value=self._safe_cell_value(value))
                 if data_styles and header in data_styles:
                     cell._style = copy(data_styles[header])
                 if border:
@@ -137,7 +140,7 @@ class ExcelExporter:
         total_row = start_row + len(records)
         total_label_col = header_map["发票号码"]
         total_amount_col = header_map["价税合计（元）"]
-        label_cell = sheet.cell(row=total_row, column=total_label_col, value="金额合计")
+        label_cell = sheet.cell(row=total_row, column=total_label_col, value="金额合计（全部）")
         amount_cell = sheet.cell(
             row=total_row,
             column=total_amount_col,
@@ -151,6 +154,26 @@ class ExcelExporter:
         if border:
             label_cell.border = border
             amount_cell.border = border
+
+        suggested_total_row = total_row + 1
+        suggested_label_cell = sheet.cell(
+            row=suggested_total_row,
+            column=total_label_col,
+            value="建议合计（排除重复/失败）",
+        )
+        suggested_amount_cell = sheet.cell(
+            row=suggested_total_row,
+            column=total_amount_col,
+            value=self._sum_suggested_amount(records),
+        )
+        if template_row_height is not None:
+            sheet.row_dimensions[suggested_total_row].height = template_row_height
+        suggested_label_cell.font = Font(bold=True)
+        suggested_amount_cell.font = Font(bold=True)
+        suggested_amount_cell.number_format = "#,##0.00"
+        if border:
+            suggested_label_cell.border = border
+            suggested_amount_cell.border = border
 
     def _find_header_row(self, sheet) -> Optional[int]:
         required_headers = set(EXCEL_HEADERS)
@@ -184,8 +207,49 @@ class ExcelExporter:
             2,
         )
 
+    def _sum_suggested_amount(self, records: list[InvoiceRecord]) -> float:
+        return round(
+            sum(
+                record.total_amount or 0
+                for record in records
+                if record.parse_success and not self._is_duplicate_record(record)
+            ),
+            2,
+        )
+
     def _is_duplicate_record(self, record: InvoiceRecord) -> bool:
         return bool(record.duplicate_invoice or record.duplicate_file)
+
+    def _safe_cell_value(self, value):
+        if not isinstance(value, str):
+            return value
+        if not value:
+            return value
+        stripped = value.lstrip()
+        if stripped.startswith(self.FORMULA_PREFIXES):
+            return "'" + value
+        return value
+
+    def _save_workbook_atomically(self, workbook, output_path: Path) -> None:
+        temp_name = ""
+        try:
+            handle, temp_name = tempfile.mkstemp(
+                prefix=f".{output_path.stem}.",
+                suffix=output_path.suffix or ".xlsx",
+                dir=output_path.parent,
+            )
+            os.close(handle)
+            temp_path = Path(temp_name)
+            workbook.save(temp_path)
+            temp_path.replace(output_path)
+        finally:
+            if temp_name:
+                temp_path = Path(temp_name)
+                if temp_path.exists():
+                    try:
+                        temp_path.unlink()
+                    except OSError:
+                        pass
 
     def _set_default_column_widths(self, sheet) -> None:
         widths = {

@@ -11,6 +11,7 @@ from PIL import Image
 from services.ocr_service import OCRService
 from utils.formatters import clean_text
 from utils.image_utils import build_ocr_variants
+from utils.logging_utils import safe_log_path
 
 logger = logging.getLogger(__name__)
 
@@ -34,9 +35,15 @@ class PDFTextExtractor:
         self,
         ocr_service: OCRService,
         enable_ocr: bool = True,
+        max_ocr_pages: int = 10,
+        ocr_render_scale: float = 2.0,
+        ocr_try_variants: bool = True,
     ) -> None:
         self.ocr_service = ocr_service
         self.enable_ocr = enable_ocr
+        self.max_ocr_pages = max(1, int(max_ocr_pages))
+        self.ocr_render_scale = max(1.0, float(ocr_render_scale))
+        self.ocr_try_variants = ocr_try_variants
 
     def extract(self, file_path: Path) -> TextExtractionResult:
         errors: list[str] = []
@@ -63,9 +70,9 @@ class PDFTextExtractor:
                     ocr_engine=engine_name,
                 )
             errors.append("OCR 未提取到有效文本")
-        except Exception as exc:
-            logger.exception("OCR failed for %s", file_path)
-            errors.append(f"OCR 识别失败：{exc}")
+        except Exception:
+            logger.warning("OCR failed for %s", safe_log_path(file_path))
+            errors.append("OCR 识别失败")
 
         return TextExtractionResult(
             text=text or fallback_text,
@@ -96,7 +103,7 @@ class PDFTextExtractor:
                     if page_text.strip():
                         chunks.append(page_text)
         except Exception:
-            logger.exception("pdfplumber extraction failed for %s", file_path)
+            logger.warning("pdfplumber extraction failed for %s", safe_log_path(file_path))
             return ""
         return "\n".join(chunks).strip()
 
@@ -107,7 +114,15 @@ class PDFTextExtractor:
 
         with fitz.open(file_path) as document:
             for page_index, page in enumerate(document, start=1):
-                matrix = fitz.Matrix(2.0, 2.0)
+                if page_index > self.max_ocr_pages:
+                    logger.info(
+                        "OCR page limit reached for %s at %s pages",
+                        safe_log_path(file_path),
+                        self.max_ocr_pages,
+                    )
+                    break
+
+                matrix = fitz.Matrix(self.ocr_render_scale, self.ocr_render_scale)
                 pixmap = page.get_pixmap(matrix=matrix, alpha=False)
                 image = Image.frombytes(
                     "RGB",
@@ -116,11 +131,20 @@ class PDFTextExtractor:
                 )
                 result = None
                 variant_name = "original"
-                for variant in build_ocr_variants(image):
+                variants = build_ocr_variants(image)
+                if not self.ocr_try_variants:
+                    variants = variants[:1]
+                for variant in variants:
                     candidate = self.ocr_service.recognize(variant.data)
-                    if result is None or self.ocr_service.score_result(candidate) > self.ocr_service.score_result(result):
+                    if (
+                        result is None
+                        or self.ocr_service.score_result(candidate)
+                        > self.ocr_service.score_result(result)
+                    ):
                         result = candidate
                         variant_name = variant.name
+                    if self._is_good_ocr_result(candidate):
+                        break
 
                 if result is None:
                     continue
@@ -133,7 +157,7 @@ class PDFTextExtractor:
                 logger.info(
                     "OCR page %s for %s with engine %s and variant %s",
                     page_index,
-                    file_path.name,
+                    safe_log_path(file_path),
                     engine_name,
                     variant_name,
                 )
@@ -146,3 +170,8 @@ class PDFTextExtractor:
         if len(normalized) >= 30:
             return True
         return "发票" in normalized and len(normalized) >= 12
+
+    def _is_good_ocr_result(self, result) -> bool:
+        text_length = len(clean_text(result.text))
+        confidence = result.confidence or 0.0
+        return text_length >= 80 and confidence >= 0.85
