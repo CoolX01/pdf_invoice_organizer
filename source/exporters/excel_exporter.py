@@ -36,6 +36,7 @@ class ExcelExporter:
             sheet.title = "发票汇总"
             self._write_to_default_sheet(sheet, records)
 
+        self._write_summary_sheet(workbook, records)
         self._save_workbook_atomically(workbook, output_path)
         return output_path
 
@@ -219,6 +220,52 @@ class ExcelExporter:
 
     def _is_duplicate_record(self, record: InvoiceRecord) -> bool:
         return bool(record.duplicate_invoice or record.duplicate_file)
+
+    def _write_summary_sheet(self, workbook, records: list[InvoiceRecord]) -> None:
+        sheet_name = "问题汇总"
+        if sheet_name in workbook.sheetnames:
+            del workbook[sheet_name]
+        sheet = workbook.create_sheet(sheet_name, 0)
+
+        rows = [
+            ("指标", "数量/金额"),
+            ("总文件数", len(records)),
+            ("核心字段完整", sum(1 for record in records if record.parse_success)),
+            ("失败", sum(1 for record in records if not record.parse_success)),
+            ("需复核", sum(1 for record in records if self._needs_review(record))),
+            ("相同文件", sum(1 for record in records if record.duplicate_file)),
+            ("疑似重复发票", sum(1 for record in records if record.duplicate_invoice)),
+            ("高风险重复冲突", sum(1 for record in records if record.duplicate_invoice_conflict)),
+            ("缺发票号码", self._count_remark(records, "缺少发票号码")),
+            ("缺金额", self._count_remark(records, "缺少金额")),
+            ("缺日期", self._count_remark(records, "缺少日期")),
+            ("OCR 低置信度", self._count_remark(records, "OCR 置信度偏低")),
+            ("金额合计（全部）", self._sum_amount(records)),
+            ("建议合计（排除重复/失败）", self._sum_suggested_amount(records)),
+        ]
+
+        header_fill = PatternFill("solid", fgColor="DCE6F1")
+        header_font = Font(bold=True)
+        for row_index, (label, value) in enumerate(rows, start=1):
+            label_cell = sheet.cell(row=row_index, column=1, value=label)
+            value_cell = sheet.cell(row=row_index, column=2, value=value)
+            if row_index == 1:
+                label_cell.fill = header_fill
+                value_cell.fill = header_fill
+                label_cell.font = header_font
+                value_cell.font = header_font
+            if isinstance(value, float):
+                value_cell.number_format = "#,##0.00"
+
+        sheet.column_dimensions["A"].width = 28
+        sheet.column_dimensions["B"].width = 18
+
+    def _count_remark(self, records: list[InvoiceRecord], token: str) -> int:
+        return sum(1 for record in records if token in record.remarks)
+
+    def _needs_review(self, record: InvoiceRecord) -> bool:
+        review_tokens = ("缺少", "失败", "疑似重复", "高风险", "异常", "OCR 置信度偏低")
+        return any(token in record.remarks for token in review_tokens) or self._is_duplicate_record(record)
 
     def _safe_cell_value(self, value):
         if not isinstance(value, str):

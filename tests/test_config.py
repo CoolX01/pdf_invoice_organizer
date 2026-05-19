@@ -29,6 +29,8 @@ class AppConfigTests(unittest.TestCase):
 
         self.assertEqual(default_config["max_ocr_pages"], 10)
         self.assertEqual(example_config["max_ocr_pages"], 10)
+        self.assertTrue(default_config["confirm_ocr_before_analysis"])
+        self.assertTrue(example_config["confirm_ocr_before_analysis"])
 
     def test_invalid_user_config_is_ignored_and_save_is_atomic_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

@@ -48,7 +48,8 @@ class ExcelExporterTests(unittest.TestCase):
             ExcelExporter().export(records, output)
 
             workbook = load_workbook(output)
-            sheet = workbook.active
+            self.assertIn("问题汇总", workbook.sheetnames)
+            sheet = workbook["发票汇总"]
             headers = [sheet.cell(row=1, column=col).value for col in range(1, len(EXCEL_HEADERS) + 1)]
             self.assertEqual(headers, EXCEL_HEADERS)
             self.assertEqual(sheet.cell(row=2, column=2).value, records[0].invoice_number)
@@ -57,6 +58,16 @@ class ExcelExporterTests(unittest.TestCase):
             self.assertEqual(sheet.cell(row=5, column=3).value, 300.0)
             self.assertEqual(sheet.cell(row=6, column=2).value, "建议合计（排除重复/失败）")
             self.assertEqual(sheet.cell(row=6, column=3).value, 100.0)
+
+            summary_sheet = workbook["问题汇总"]
+            summary_values = {
+                summary_sheet.cell(row=row, column=1).value: summary_sheet.cell(row=row, column=2).value
+                for row in range(1, summary_sheet.max_row + 1)
+            }
+            self.assertEqual(summary_values["总文件数"], 3)
+            self.assertEqual(summary_values["失败"], 1)
+            self.assertEqual(summary_values["疑似重复发票"], 1)
+            self.assertEqual(summary_values["建议合计（排除重复/失败）"], 100.0)
 
     def test_text_fields_are_escaped_to_prevent_excel_formula_injection(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -75,7 +86,7 @@ class ExcelExporterTests(unittest.TestCase):
 
             ExcelExporter().export(records, output)
 
-            sheet = load_workbook(output).active
+            sheet = load_workbook(output)["发票汇总"]
             self.assertEqual(sheet.cell(row=2, column=2).value, "'+12345678901234567890")
             self.assertTrue(str(sheet.cell(row=2, column=5).value).startswith("'="))
             self.assertTrue(str(sheet.cell(row=2, column=6).value).startswith("'@"))
