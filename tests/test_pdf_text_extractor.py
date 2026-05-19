@@ -45,6 +45,23 @@ class PDFTextExtractorTests(unittest.TestCase):
 
         self.assertEqual(result.method, "pdfplumber")
 
+    def test_ocr_fallback_runs_automatically_when_text_extractors_are_not_enough(self) -> None:
+        extractor = PDFTextExtractor(FakeOCRService(), enable_ocr=True)
+        extractor._extract_with_pymupdf = lambda path: ""  # type: ignore[method-assign]
+        extractor._extract_with_pdfplumber = lambda path: "短"  # type: ignore[method-assign]
+        extractor._extract_with_ocr = lambda path: (  # type: ignore[method-assign]
+            "发票号码 12345678901234567890 金额 100 日期 2026-05-01",
+            0.88,
+            "fake",
+        )
+
+        result = extractor.extract(Path("dummy.pdf"))
+
+        self.assertEqual(result.method, "OCR:fake")
+        self.assertTrue(result.ocr_used)
+        self.assertEqual(result.ocr_confidence, 0.88)
+        self.assertEqual(result.ocr_engine, "fake")
+
     def test_ocr_disabled_returns_clear_error(self) -> None:
         extractor = PDFTextExtractor(FakeOCRService(), enable_ocr=False)
         extractor._extract_with_pymupdf = lambda path: ""  # type: ignore[method-assign]

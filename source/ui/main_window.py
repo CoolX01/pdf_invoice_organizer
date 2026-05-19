@@ -3,18 +3,12 @@ from __future__ import annotations
 from datetime import datetime
 import logging
 from pathlib import Path
-import shutil
 
 from qt_compat import (
     QAbstractItemView,
     QColor,
-    QCheckBox,
-    QDialog,
-    QDialogButtonBox,
-    QDoubleSpinBox,
     QFileDialog,
     QFile,
-    QFormLayout,
     QDragEnterEvent,
     QDropEvent,
     QFrame,
@@ -27,7 +21,6 @@ from qt_compat import (
     QPushButton,
     QProgressBar,
     QSizePolicy,
-    QSpinBox,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -123,10 +116,6 @@ class MainWindow(QMainWindow):
         self.output_button = QPushButton("更改导出位置")
         self.output_button.clicked.connect(self.choose_output_path)
         button_row.addWidget(self.output_button)
-
-        self.settings_button = QPushButton("设置")
-        self.settings_button.clicked.connect(self.open_settings)
-        button_row.addWidget(self.settings_button)
 
         self.file_count_label = QLabel("当前文件：0")
         button_row.addWidget(self.file_count_label)
@@ -351,54 +340,6 @@ class MainWindow(QMainWindow):
             self.config.save()
             self._append_log(f"已设置输出路径：{self.output_path}")
 
-    def open_settings(self) -> None:
-        if self.worker and self.worker.isRunning():
-            self._warn("提示", "分析进行中，暂不支持修改设置。")
-            return
-
-        dialog = QDialog(self)
-        dialog.setWindowTitle("设置")
-        layout = QVBoxLayout(dialog)
-        form = QFormLayout()
-
-        ocr_enabled_box = QCheckBox("启用 OCR 兜底识别扫描版 PDF")
-        ocr_enabled_box.setChecked(bool(self.config.get("ocr_enabled", True)))
-        form.addRow("OCR：", ocr_enabled_box)
-
-        confirm_ocr_box = QCheckBox("每次分析前询问是否使用 OCR")
-        confirm_ocr_box.setChecked(bool(self.config.get("confirm_ocr_before_analysis", True)))
-        form.addRow("OCR 确认：", confirm_ocr_box)
-
-        max_pages_spin = QSpinBox()
-        max_pages_spin.setRange(1, 50)
-        max_pages_spin.setValue(int(self.config.get("max_ocr_pages", 10)))
-        form.addRow("OCR 最大页数：", max_pages_spin)
-
-        threshold_spin = QDoubleSpinBox()
-        threshold_spin.setRange(0.0, 1.0)
-        threshold_spin.setDecimals(2)
-        threshold_spin.setSingleStep(0.05)
-        threshold_spin.setValue(float(self.config.get("ocr_confidence_threshold", 0.75)))
-        form.addRow("OCR 低置信度阈值：", threshold_spin)
-
-        layout.addLayout(form)
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(dialog.accept)
-        buttons.rejected.connect(dialog.reject)
-        layout.addWidget(buttons)
-
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-
-        self.config.set("ocr_enabled", ocr_enabled_box.isChecked())
-        self.config.set("confirm_ocr_before_analysis", confirm_ocr_box.isChecked())
-        self.config.set("max_ocr_pages", int(max_pages_spin.value()))
-        self.config.set("ocr_confidence_threshold", float(threshold_spin.value()))
-        self.config.save()
-        self._append_log("设置已保存。")
-
     def clear_files(self) -> None:
         if self.worker and self.worker.isRunning():
             self._warn("提示", "分析进行中，暂不支持清空列表。")
@@ -599,17 +540,8 @@ class MainWindow(QMainWindow):
             self.file_statuses[self._path_key(path)] = "排队中"
         self._refresh_file_queue()
 
-        ocr_enabled = self._resolve_ocr_enabled_for_run()
-        if ocr_enabled is None:
-            self.status_label.setText("状态：待命")
-            self.file_statuses.clear()
-            self._refresh_file_queue()
-            self._refresh_button_states()
-            self._append_log("已取消分析。")
-            return
-
         options = {
-            "ocr_enabled": ocr_enabled,
+            "ocr_enabled": bool(self.config.get("ocr_enabled", True)),
             "ocr_confidence_threshold": float(self.config.get("ocr_confidence_threshold", 0.75)),
             "max_preview_text_chars": int(self.config.get("max_preview_text_chars", 1200)),
             "invoice_title_source": str(self.config.get("invoice_title_source", "filename")),
@@ -625,37 +557,6 @@ class MainWindow(QMainWindow):
         self.worker.failed.connect(self._on_analysis_failed)
         self.worker.start()
         self._refresh_button_states()
-
-    def _resolve_ocr_enabled_for_run(self) -> bool | None:
-        configured_ocr_enabled = bool(self.config.get("ocr_enabled", True))
-        if not configured_ocr_enabled:
-            self._append_log("本次分析未启用 OCR。")
-            return False
-        if not bool(self.config.get("confirm_ocr_before_analysis", True)):
-            self._append_log("本次分析将启用 OCR。")
-            return True
-
-        message_box = QMessageBox(self)
-        message_box.setIcon(QMessageBox.Icon.Question)
-        message_box.setWindowTitle("是否启用 OCR")
-        message_box.setText("是否在本次分析中启用 OCR 兜底识别？")
-        message_box.setInformativeText(
-            "启用 OCR 可识别扫描版 PDF，但会明显变慢。关闭 OCR 时，扫描版 PDF 可能识别失败。"
-        )
-        use_ocr_button = message_box.addButton("启用 OCR", QMessageBox.ButtonRole.AcceptRole)
-        skip_ocr_button = message_box.addButton("不使用 OCR", QMessageBox.ButtonRole.ActionRole)
-        cancel_button = message_box.addButton("取消分析", QMessageBox.ButtonRole.RejectRole)
-        message_box.setDefaultButton(use_ocr_button)
-        message_box.exec()
-
-        clicked_button = message_box.clickedButton()
-        if clicked_button == cancel_button:
-            return None
-        if clicked_button == skip_ocr_button:
-            self._append_log("本次分析已按用户选择关闭 OCR。")
-            return False
-        self._append_log("本次分析已按用户选择启用 OCR。")
-        return True
 
     def cancel_analysis(self) -> None:
         if not self.worker or not self.worker.isRunning():
@@ -673,14 +574,6 @@ class MainWindow(QMainWindow):
             self._warn("提示", "当前没有可导出的结果。")
             return
 
-        export_records, export_mode_label = self._select_export_records()
-        if export_records is None:
-            self._append_log("已取消 Excel 导出。")
-            return
-        if not export_records:
-            self._warn("提示", f"当前没有可导出的{export_mode_label}。")
-            return
-
         output_path = self.output_path
         if not output_path:
             output_path = self._initial_output_path()
@@ -689,7 +582,7 @@ class MainWindow(QMainWindow):
             self._append_log(f"未设置输出路径，已自动使用默认路径：{output_path}")
 
         try:
-            current_signature = (self._current_records_signature(), export_mode_label)
+            current_signature = self._current_records_signature()
             if self._should_create_followup_export(output_path, current_signature):
                 output_path = self._build_unique_export_path(output_path)
                 self.output_path = output_path
@@ -705,7 +598,7 @@ class MainWindow(QMainWindow):
 
             template_path = self._configured_template_path()
             exported_path = self.exporter.export(
-                export_records,
+                self.records,
                 output_path=output_path,
                 template_path=template_path,
             )
@@ -714,12 +607,7 @@ class MainWindow(QMainWindow):
             self.last_exported_path = exported_path
             self.last_export_signature = current_signature
             self.status_label.setText("状态：导出完成")
-            self._append_log(f"Excel 导出成功：{exported_path}（范围：{export_mode_label}，{len(export_records)} 条）")
-            QMessageBox.information(
-                self,
-                "Excel 已生成完成",
-                f"Excel 已成功生成：\n{exported_path}\n\n导出范围：{export_mode_label}（{len(export_records)} 条）\n导出文件包含发票号码、金额、购销方等敏感信息，请妥善保存。",
-            )
+            self._append_log(f"Excel 导出成功：{exported_path}（{len(self.records)} 条）")
         except Exception as exc:
             logger.exception("Export failed")
             QMessageBox.critical(
@@ -728,38 +616,6 @@ class MainWindow(QMainWindow):
                 f"生成 Excel 失败：\n{exc}",
             )
             self._append_log(f"Excel 导出失败：{exc}")
-
-    def _select_export_records(self) -> tuple[list[InvoiceRecord] | None, str]:
-        message_box = QMessageBox(self)
-        message_box.setIcon(QMessageBox.Icon.Question)
-        message_box.setWindowTitle("选择导出范围")
-        message_box.setText("请选择本次 Excel 导出范围。")
-        message_box.setInformativeText(
-            "建议先导出全部记录；如果只需要报销汇总，可选择“仅建议记录”；如需处理问题，可导出“失败/需复核清单”。"
-        )
-        all_button = message_box.addButton("导出全部记录", QMessageBox.ButtonRole.AcceptRole)
-        suggested_button = message_box.addButton("仅建议记录", QMessageBox.ButtonRole.ActionRole)
-        issue_button = message_box.addButton("失败/需复核清单", QMessageBox.ButtonRole.ActionRole)
-        cancel_button = message_box.addButton("取消", QMessageBox.ButtonRole.RejectRole)
-        message_box.setDefaultButton(all_button)
-        message_box.exec()
-
-        clicked_button = message_box.clickedButton()
-        if clicked_button == cancel_button:
-            return None, ""
-        if clicked_button == suggested_button:
-            return [
-                record
-                for record in self.records
-                if record.parse_success and not self._is_duplicate_record(record)
-            ], "仅建议记录"
-        if clicked_button == issue_button:
-            return [
-                record
-                for record in self.records
-                if (not record.parse_success) or self._needs_review(record) or self._is_duplicate_record(record)
-            ], "失败/需复核清单"
-        return self.records, "全部记录"
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         if event.mimeData().hasUrls():
@@ -859,17 +715,6 @@ class MainWindow(QMainWindow):
         review_count = sum(1 for item in records if self._needs_review(item) or self._is_duplicate_record(item))
         self._append_log(
             f"分析结束：核心字段完整 {success_count} 条，失败 {failed_count} 条，需复核 {review_count} 条。"
-        )
-        QMessageBox.information(
-            self,
-            "分析完成",
-            (
-                f"已完成 {len(records)} 个文件的分析。\n"
-                f"核心字段完整：{success_count}\n"
-                f"失败：{failed_count}\n"
-                f"需复核：{review_count}\n\n"
-                "请在结果表的“状态”和“备注/失败原因”列查看需复核项目。"
-            ),
         )
 
     def _on_analysis_cancelled(self, records: list[InvoiceRecord]) -> None:
@@ -1219,35 +1064,11 @@ class MainWindow(QMainWindow):
         if not output_path.exists():
             return output_path
 
-        message_box = QMessageBox(self)
-        message_box.setIcon(QMessageBox.Icon.Warning)
-        message_box.setWindowTitle("导出文件已存在")
-        message_box.setText(f"目标 Excel 文件已存在：\n{output_path}")
-        message_box.setInformativeText(
-            "为避免覆盖已有汇总表，建议另存为新文件。若选择覆盖，软件会先备份原文件。"
-        )
-        overwrite_button = message_box.addButton("覆盖并备份", QMessageBox.ButtonRole.AcceptRole)
-        new_file_button = message_box.addButton("另存为新文件", QMessageBox.ButtonRole.ActionRole)
-        cancel_button = message_box.addButton("取消", QMessageBox.ButtonRole.RejectRole)
-        message_box.setDefaultButton(new_file_button)
-        message_box.exec()
-
-        clicked_button = message_box.clickedButton()
-        if clicked_button == cancel_button:
-            return None
-        if clicked_button == new_file_button:
-            new_path = self._build_unique_export_path(output_path)
-            self.output_path = new_path
-            self.output_path_label.setText(f"输出路径：{self.output_path}")
-            self._append_log(f"目标文件已存在，已改为另存：{new_path}")
-            return new_path
-        if clicked_button == overwrite_button:
-            backup_path = self._build_backup_path(output_path)
-            shutil.copy2(output_path, backup_path)
-            self._append_log(f"覆盖前已备份原 Excel：{backup_path}")
-            return output_path
-
-        return None
+        new_path = self._build_unique_export_path(output_path)
+        self.output_path = new_path
+        self.output_path_label.setText(f"输出路径：{self.output_path}")
+        self._append_log(f"目标 Excel 已存在，为避免覆盖已自动另存为：{new_path}")
+        return new_path
 
     def _configured_template_path(self) -> Path | None:
         configured_path = str(self.config.get("excel_template_path", "")).strip()
@@ -1267,18 +1088,6 @@ class MainWindow(QMainWindow):
         while candidate.exists():
             candidate = output_path.with_name(
                 f"{output_path.stem}_{timestamp}_{counter}{suffix}"
-            )
-            counter += 1
-        return candidate
-
-    def _build_backup_path(self, output_path: Path) -> Path:
-        suffix = output_path.suffix or ".xlsx"
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        candidate = output_path.with_name(f"{output_path.stem}_backup_{timestamp}{suffix}")
-        counter = 2
-        while candidate.exists():
-            candidate = output_path.with_name(
-                f"{output_path.stem}_backup_{timestamp}_{counter}{suffix}"
             )
             counter += 1
         return candidate
@@ -1329,7 +1138,6 @@ class MainWindow(QMainWindow):
         self.file_button.setEnabled(not running)
         self.folder_button.setEnabled(not running)
         self.output_button.setEnabled(not running)
-        self.settings_button.setEnabled(not running)
 
     def _append_log(self, message: str) -> None:
         timestamp = datetime.now().strftime("%H:%M:%S")

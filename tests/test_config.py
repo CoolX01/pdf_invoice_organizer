@@ -14,7 +14,7 @@ from utils.config import AppConfig
 
 
 class AppConfigTests(unittest.TestCase):
-    def test_default_and_example_config_use_multi_page_ocr_limit(self) -> None:
+    def test_default_and_example_config_enable_automatic_ocr_defaults(self) -> None:
         project_dir = Path(__file__).resolve().parents[1]
         default_config = json.loads(
             (project_dir / "source" / "config" / "default_settings.json").read_text(
@@ -29,8 +29,14 @@ class AppConfigTests(unittest.TestCase):
 
         self.assertEqual(default_config["max_ocr_pages"], 10)
         self.assertEqual(example_config["max_ocr_pages"], 10)
-        self.assertTrue(default_config["confirm_ocr_before_analysis"])
-        self.assertTrue(example_config["confirm_ocr_before_analysis"])
+        self.assertTrue(default_config["ocr_enabled"])
+        self.assertTrue(example_config["ocr_enabled"])
+        self.assertEqual(default_config["ocr_confidence_threshold"], 0.75)
+        self.assertEqual(example_config["ocr_confidence_threshold"], 0.75)
+        self.assertTrue(default_config["ocr_try_variants"])
+        self.assertTrue(example_config["ocr_try_variants"])
+        self.assertNotIn("confirm_ocr_before_analysis", default_config)
+        self.assertNotIn("confirm_ocr_before_analysis", example_config)
 
     def test_invalid_user_config_is_ignored_and_save_is_atomic_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -58,6 +64,29 @@ class AppConfigTests(unittest.TestCase):
             if os.name != "nt":
                 self.assertEqual((user_dir.stat().st_mode & 0o777), 0o700)
                 self.assertEqual(((user_dir / "user_settings.json").stat().st_mode & 0o777), 0o600)
+
+    def test_obsolete_ocr_confirmation_config_is_ignored(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            base_dir = Path(tmp_dir) / "app"
+            config_dir = base_dir / "config"
+            config_dir.mkdir(parents=True)
+            (config_dir / "default_settings.json").write_text(
+                json.dumps({"default_output_dir": "", "ocr_enabled": True}),
+                encoding="utf-8",
+            )
+
+            user_dir = Path(tmp_dir) / "user-config"
+            user_dir.mkdir()
+            (user_dir / "user_settings.json").write_text(
+                json.dumps({"confirm_ocr_before_analysis": False}),
+                encoding="utf-8",
+            )
+
+            with patch("utils.config.user_config_dir", return_value=user_dir):
+                config = AppConfig(base_dir)
+
+            self.assertIsNone(config.get("confirm_ocr_before_analysis"))
+            self.assertTrue(config.get("ocr_enabled"))
 
 
 if __name__ == "__main__":

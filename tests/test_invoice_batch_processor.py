@@ -115,6 +115,29 @@ class InvoiceBatchProcessorTests(unittest.TestCase):
             self.assertFalse(records[0].parse_success)
             self.assertIn("金额异常", records[0].remarks)
 
+    def test_ocr_metadata_and_low_confidence_review_are_preserved(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            invoice = Path(tmp_dir) / "invoice.pdf"
+            invoice.write_bytes(b"%PDF-one")
+
+            processor = InvoiceBatchProcessor(enable_ocr=True, ocr_confidence_threshold=0.75)
+            processor.extractor.extract = lambda path: TextExtractionResult(  # type: ignore[method-assign]
+                text=invoice_text("12345678901234567890"),
+                method="OCR:fake",
+                ocr_used=True,
+                ocr_confidence=0.60,
+                ocr_engine="fake",
+            )
+
+            records = processor.process_files([invoice])
+
+            self.assertEqual(len(records), 1)
+            self.assertTrue(records[0].parse_success)
+            self.assertTrue(records[0].ocr_used)
+            self.assertEqual(records[0].ocr_confidence, 0.60)
+            self.assertIn("已使用 OCR（fake）", records[0].remarks)
+            self.assertIn("OCR 置信度偏低", records[0].remarks)
+
     def test_far_future_invoice_date_marks_record_failed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             invoice = Path(tmp_dir) / "invoice.pdf"

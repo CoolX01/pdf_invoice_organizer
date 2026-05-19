@@ -42,7 +42,8 @@ class ExcelExporterTests(unittest.TestCase):
             records = [
                 record(1, 100.0),
                 record(2, 200.0, duplicate_invoice=True),
-                record(3, None, parse_success=False),
+                record(3, None, parse_success=False, remarks="识别失败"),
+                record(4, 50.0, remarks="OCR 置信度偏低（0.60）"),
             ]
 
             ExcelExporter().export(records, output)
@@ -54,20 +55,23 @@ class ExcelExporterTests(unittest.TestCase):
             self.assertEqual(headers, EXCEL_HEADERS)
             self.assertEqual(sheet.cell(row=2, column=2).value, records[0].invoice_number)
             self.assertEqual(sheet.cell(row=2, column=3).value, 100.0)
-            self.assertEqual(sheet.cell(row=5, column=2).value, "金额合计（全部）")
-            self.assertEqual(sheet.cell(row=5, column=3).value, 300.0)
-            self.assertEqual(sheet.cell(row=6, column=2).value, "建议合计（排除重复/失败）")
-            self.assertEqual(sheet.cell(row=6, column=3).value, 100.0)
+            self.assertEqual(sheet.cell(row=4, column=9).value, "识别失败")
+            self.assertEqual(sheet.cell(row=6, column=2).value, "金额合计（全部）")
+            self.assertEqual(sheet.cell(row=6, column=3).value, 350.0)
+            self.assertEqual(sheet.cell(row=7, column=2).value, "建议合计（排除重复/失败）")
+            self.assertEqual(sheet.cell(row=7, column=3).value, 150.0)
 
             summary_sheet = workbook["问题汇总"]
             summary_values = {
                 summary_sheet.cell(row=row, column=1).value: summary_sheet.cell(row=row, column=2).value
                 for row in range(1, summary_sheet.max_row + 1)
             }
-            self.assertEqual(summary_values["总文件数"], 3)
+            self.assertEqual(summary_values["总文件数"], 4)
             self.assertEqual(summary_values["失败"], 1)
+            self.assertEqual(summary_values["需复核"], 3)
             self.assertEqual(summary_values["疑似重复发票"], 1)
-            self.assertEqual(summary_values["建议合计（排除重复/失败）"], 100.0)
+            self.assertEqual(summary_values["OCR 低置信度"], 1)
+            self.assertEqual(summary_values["建议合计（排除重复/失败）"], 150.0)
 
     def test_text_fields_are_escaped_to_prevent_excel_formula_injection(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

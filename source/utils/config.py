@@ -11,6 +11,8 @@ from utils.app_paths import user_config_dir
 
 logger = logging.getLogger(__name__)
 
+OBSOLETE_CONFIG_KEYS = {"confirm_ocr_before_analysis"}
+
 
 class AppConfig:
     def __init__(self, base_dir: Path) -> None:
@@ -29,6 +31,8 @@ class AppConfig:
             data.update(self._read_json_file(self.user_path))
         elif self.legacy_user_path.exists():
             data.update(self._read_json_file(self.legacy_user_path))
+        for key in OBSOLETE_CONFIG_KEYS:
+            data.pop(key, None)
         return data
 
     def _read_json_file(self, path: Path, required: bool = False) -> dict[str, Any]:
