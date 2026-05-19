@@ -80,6 +80,41 @@ class PDFTextExtractor:
             errors=errors,
         )
 
+    def extract_ocr(self, file_path: Path) -> TextExtractionResult:
+        if not self.enable_ocr:
+            return TextExtractionResult(
+                method="none",
+                errors=["未启用 OCR，无法执行视觉复核"],
+            )
+
+        try:
+            ocr_text, confidence, engine_name = self._extract_with_ocr(file_path)
+        except Exception:
+            logger.warning("OCR audit failed for %s", safe_log_path(file_path))
+            return TextExtractionResult(
+                method="failed",
+                ocr_used=True,
+                errors=["OCR 自动复核失败"],
+            )
+
+        if self._enough_text(ocr_text):
+            return TextExtractionResult(
+                text=ocr_text,
+                method=f"OCR:{engine_name}",
+                ocr_used=True,
+                ocr_confidence=confidence,
+                ocr_engine=engine_name,
+            )
+
+        return TextExtractionResult(
+            text=ocr_text,
+            method=f"OCR:{engine_name}" if engine_name else "OCR",
+            ocr_used=True,
+            ocr_confidence=confidence,
+            ocr_engine=engine_name,
+            errors=["OCR 自动复核未提取到有效文本"],
+        )
+
     def _extract_with_pymupdf(self, file_path: Path) -> str:
         chunks: list[str] = []
         with fitz.open(file_path) as document:

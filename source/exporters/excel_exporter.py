@@ -264,7 +264,7 @@ class ExcelExporter:
         return sum(1 for record in records if token in record.remarks)
 
     def _needs_review(self, record: InvoiceRecord) -> bool:
-        review_tokens = ("缺少", "失败", "疑似重复", "高风险", "异常", "OCR 置信度偏低")
+        review_tokens = ("缺少", "失败", "疑似重复", "高风险", "异常", "不一致", "需复核", "OCR 置信度偏低")
         return any(token in record.remarks for token in review_tokens) or self._is_duplicate_record(record)
 
     def _safe_cell_value(self, value):

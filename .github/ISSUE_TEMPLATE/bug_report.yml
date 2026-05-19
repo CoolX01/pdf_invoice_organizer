@@ -1,0 +1,46 @@
+name: Bug 反馈
+description: 报告 PDF 发票识别、导出、界面或打包问题
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: 问题描述
+      description: 简要说明发生了什么。
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 请列出导入文件、点击按钮、导出位置等关键步骤。不要上传未脱敏发票。
+      placeholder: |
+        1. 启动应用
+        2. 导入 ...
+        3. 点击 ...
+        4. 看到 ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望结果
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际结果
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: 系统与运行方式
+      placeholder: macOS 15 / Windows 11，源码运行或打包版本
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志或截图
+      description: 请先脱敏公司名、税号、金额、发票号码等敏感信息。

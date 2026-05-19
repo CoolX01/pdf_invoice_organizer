@@ -178,6 +178,101 @@ class InvoiceBatchProcessorTests(unittest.TestCase):
             self.assertIn("识别失败", records[0].remarks)
             self.assertTrue(records[1].parse_success)
 
+    def test_automatic_ocr_audit_fills_missing_core_field(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            invoice = Path(tmp_dir) / "invoice.pdf"
+            invoice.write_bytes(b"%PDF-one")
+
+            processor = InvoiceBatchProcessor(enable_ocr=True)
+            processor.extractor.extract = lambda path: TextExtractionResult(  # type: ignore[method-assign]
+                text="""增值税电子普通发票
+发票号码: 12345678901234567890
+开票日期: 2026-05-01
+购买方信息 名称: 北京示例科技有限公司
+销售方信息 名称: 上海样例服务有限公司
+""",
+                method="PyMuPDF",
+            )
+            processor.extractor.extract_ocr = lambda path: TextExtractionResult(  # type: ignore[method-assign]
+                text=invoice_text("12345678901234567890", "100.00"),
+                method="OCR:fake",
+                ocr_used=True,
+                ocr_confidence=0.96,
+                ocr_engine="fake",
+            )
+
+            records = processor.process_files([invoice])
+
+            self.assertEqual(len(records), 1)
+            self.assertTrue(records[0].parse_success)
+            self.assertEqual(records[0].total_amount, 100.0)
+            self.assertTrue(records[0].ocr_used)
+            self.assertEqual(records[0].ocr_confidence, 0.96)
+            self.assertIn("OCR自动补全金额", records[0].remarks)
+            self.assertNotIn("缺少金额", records[0].remarks)
+
+    def test_automatic_ocr_audit_marks_core_conflict_for_review(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            invoice = Path(tmp_dir) / "invoice.pdf"
+            invoice.write_bytes(b"%PDF-one")
+
+            processor = InvoiceBatchProcessor(enable_ocr=True)
+            processor.extractor.extract = lambda path: TextExtractionResult(  # type: ignore[method-assign]
+                text="""增值税电子普通发票
+发票号码: 12345678901234567890
+开票日期: 2026-05-01
+购 销 买 名称: 北京示例科技有限公司 售 名称: 上海样例服务有限公司 方 方 信
+价税合计（小写） ￥100.00
+""",
+                method="PyMuPDF",
+            )
+            processor.extractor.extract_ocr = lambda path: TextExtractionResult(  # type: ignore[method-assign]
+                text=invoice_text("12345678901234567899", "100.00"),
+                method="OCR:fake",
+                ocr_used=True,
+                ocr_confidence=0.95,
+                ocr_engine="fake",
+            )
+
+            records = processor.process_files([invoice])
+
+            self.assertEqual(len(records), 1)
+            self.assertTrue(records[0].parse_success)
+            self.assertEqual(records[0].invoice_number, "12345678901234567890")
+            self.assertTrue(records[0].ocr_used)
+            self.assertIn("高风险：PDF文本/OCR发票号码不一致", records[0].remarks)
+
+    def test_automatic_ocr_audit_corrects_suspicious_party_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            invoice = Path(tmp_dir) / "invoice.pdf"
+            invoice.write_bytes(b"%PDF-one")
+
+            processor = InvoiceBatchProcessor(enable_ocr=True)
+            processor.extractor.extract = lambda path: TextExtractionResult(  # type: ignore[method-assign]
+                text="""增值税电子普通发票
+发票号码: 12345678901234567890
+开票日期: 2026-05-01
+购买方信息 名称: 北京示例科技有限公司
+销售方信息 名称: 上海样例服务有限公司 方 方 信 信息统一社会信用代码/纳税人识别号:91310115MA0000000Y
+价税合计（小写） ￥100.00
+""",
+                method="PyMuPDF",
+            )
+            processor.extractor.extract_ocr = lambda path: TextExtractionResult(  # type: ignore[method-assign]
+                text=invoice_text("12345678901234567890", "100.00"),
+                method="OCR:fake",
+                ocr_used=True,
+                ocr_confidence=0.95,
+                ocr_engine="fake",
+            )
+
+            records = processor.process_files([invoice])
+
+            self.assertEqual(len(records), 1)
+            self.assertTrue(records[0].parse_success)
+            self.assertEqual(records[0].seller_name, "上海样例服务有限公司")
+            self.assertIn("OCR自动修正销售方名称", records[0].remarks)
+
 
 if __name__ == "__main__":
     unittest.main()

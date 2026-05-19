@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import date, datetime, timedelta
+from difflib import SequenceMatcher
 import logging
 from pathlib import Path
+import re
 from typing import Callable, Optional
 
 from models.invoice_record import FileTask, InvoiceRecord
@@ -22,6 +24,7 @@ CancelCallback = Optional[Callable[[], bool]]
 DUPLICATE_INVOICE_REMARK_PREFIX = "疑似重复发票（发票号码重复："
 DUPLICATE_INVOICE_CONFLICT_REMARK_PREFIX = "高风险重复发票（发票号码相同但金额/日期/销售方不一致："
 FUTURE_DATE_TOLERANCE_DAYS = 7
+CORE_FIELD_CONFLICT_PREFIX = "高风险：PDF文本/OCR"
 
 
 class InvoiceBatchProcessor:
@@ -164,6 +167,7 @@ class InvoiceBatchProcessor:
 
             self.parser.parse(record, text)
             self._validate_record_fields(record)
+            self._audit_with_ocr_if_needed(record, text, extraction)
 
             if not record.parse_success:
                 record.append_remark("关键信息识别不完整")
@@ -288,8 +292,12 @@ class InvoiceBatchProcessor:
     @staticmethod
     def _validate_record_fields(record: InvoiceRecord) -> None:
         if record.total_amount is not None and record.total_amount <= 0:
-            record.parse_success = False
-            record.append_remark("金额异常（应大于 0）")
+            if record.total_amount == 0:
+                record.parse_success = False
+                record.append_remark("金额异常（应不为 0）")
+            elif not InvoiceBatchProcessor._is_red_invoice_record(record):
+                record.parse_success = False
+                record.append_remark("金额异常（负数金额需为红字发票）")
 
         if record.invoice_number:
             normalized_invoice_number = clean_text(record.invoice_number).replace(" ", "")
@@ -308,3 +316,274 @@ class InvoiceBatchProcessor:
                 if invoice_date > max_allowed_date:
                     record.parse_success = False
                     record.append_remark("开票日期异常（晚于当前日期超过 7 天）")
+
+    @staticmethod
+    def _is_red_invoice_record(record: InvoiceRecord) -> bool:
+        text = clean_text(" ".join([record.raw_text_preview, record.invoice_type, record.remarks]))
+        return "红字发票" in text or "负数" in text or "被红冲" in text
+
+    def _audit_with_ocr_if_needed(
+        self,
+        record: InvoiceRecord,
+        source_text: str,
+        extraction,
+    ) -> None:
+        if extraction.ocr_used or not self.extractor.enable_ocr:
+            return
+
+        trigger_reasons = self._ocr_audit_trigger_reasons(record, source_text)
+        if not trigger_reasons:
+            return
+
+        ocr_extraction = self.extractor.extract_ocr(record.file_path)
+        record.ocr_used = True
+        record.ocr_confidence = ocr_extraction.ocr_confidence
+
+        if ocr_extraction.errors:
+            for reason in trigger_reasons:
+                record.append_remark(reason)
+            for error in ocr_extraction.errors:
+                record.append_remark(error)
+            return
+
+        if (
+            ocr_extraction.ocr_confidence is not None
+            and ocr_extraction.ocr_confidence < self.ocr_confidence_threshold
+        ):
+            record.append_remark(f"OCR 置信度偏低（{ocr_extraction.ocr_confidence:.2f}）")
+
+        ocr_record = InvoiceRecord(
+            file_path=record.file_path,
+            file_name=record.file_name,
+            index=record.index,
+            file_hash=record.file_hash,
+        )
+        ocr_record.ocr_used = True
+        ocr_record.ocr_confidence = ocr_extraction.ocr_confidence
+        ocr_record.raw_text_preview = clean_text(ocr_extraction.text)[: self.max_preview_text_chars]
+        self.parser.parse(ocr_record, ocr_extraction.text)
+        self._validate_record_fields(ocr_record)
+
+        changed = self._merge_ocr_candidate(record, ocr_record, trigger_reasons)
+        self._validate_record_fields(record)
+        self._refresh_parse_success(record)
+        if changed:
+            record.append_remark("OCR自动复核并补全字段")
+        elif not self._has_core_field_conflict(record) and "已自动触发 OCR 复核" not in record.remarks:
+            record.append_remark("OCR自动复核通过")
+
+    def _ocr_audit_trigger_reasons(self, record: InvoiceRecord, source_text: str) -> list[str]:
+        reasons: list[str] = []
+        if not record.parse_success:
+            reasons.append("关键字段不完整，已自动触发 OCR 复核")
+
+        for field_name, value in (
+            ("购买方名称", record.buyer_name),
+            ("销售方名称", record.seller_name),
+        ):
+            issue = self._party_name_issue(field_name, value)
+            if issue:
+                reasons.append(issue)
+
+        normalized = clean_text(source_text)
+        layout_risk_tokens = (
+            "购 销 买 名称",
+            "方 方 信",
+            "买方信息 名称",
+            "销售方信息 下载次数",
+        )
+        if any(token in normalized for token in layout_risk_tokens):
+            reasons.append("PDF文本层疑似版式错序，已自动触发 OCR 复核")
+
+        return self._deduplicate_messages(reasons)
+
+    @staticmethod
+    def _party_name_issue(field_name: str, value: str) -> str:
+        normalized = clean_text(value)
+        if not normalized:
+            return f"{field_name}缺失，已自动触发 OCR 复核"
+
+        compact = normalized.replace(" ", "")
+        risky_tokens = (
+            "统一社会信用代码",
+            "纳税人识别号",
+            "购买方信息",
+            "销售方信息",
+            "项目名称",
+            "规格型号",
+            "下载次数",
+            "开票人",
+            "方方信",
+            "信息统一",
+        )
+        if any(token in compact for token in risky_tokens):
+            return f"{field_name}异常（疑似串入其他字段），已自动触发 OCR 复核"
+
+        if InvoiceBatchProcessor._looks_like_tax_identifier(compact):
+            return f"{field_name}异常（疑似税号），已自动触发 OCR 复核"
+
+        return ""
+
+    @staticmethod
+    def _looks_like_tax_identifier(value: str) -> bool:
+        return bool(value and re.fullmatch(r"[0-9A-Z]{15,20}", value))
+
+    def _merge_ocr_candidate(
+        self,
+        record: InvoiceRecord,
+        ocr_record: InvoiceRecord,
+        trigger_reasons: list[str],
+    ) -> bool:
+        changed = False
+        core_specs = [
+            ("invoice_number", "发票号码", self._same_invoice_number),
+            ("total_amount", "金额", self._same_amount),
+            ("invoice_date", "开票日期", self._same_text),
+        ]
+
+        for attr, label, same_func in core_specs:
+            current_value = getattr(record, attr)
+            ocr_value = getattr(ocr_record, attr)
+            if not current_value and ocr_value:
+                setattr(record, attr, ocr_value)
+                self._remove_resolved_missing_remark(record, label)
+                record.append_remark(f"OCR自动补全{label}")
+                changed = True
+                continue
+            if current_value and ocr_value and not same_func(current_value, ocr_value):
+                record.append_remark(
+                    f"{CORE_FIELD_CONFLICT_PREFIX}{label}不一致（PDF：{current_value}，OCR：{ocr_value}）"
+                )
+
+        for attr, label in (
+            ("buyer_name", "购买方名称"),
+            ("seller_name", "销售方名称"),
+        ):
+            current_value = getattr(record, attr)
+            ocr_value = getattr(ocr_record, attr)
+            current_score = self._party_name_quality_score(current_value)
+            ocr_score = self._party_name_quality_score(ocr_value)
+            if ocr_value and (
+                (not current_value and ocr_score > 0)
+                or (current_value and ocr_score >= 2 and ocr_score > current_score)
+            ):
+                setattr(record, attr, ocr_value)
+                self._remove_resolved_missing_remark(record, label)
+                record.append_remark(f"OCR自动修正{label}")
+                changed = True
+                continue
+            if (
+                current_value
+                and ocr_value
+                and current_score >= 2
+                and ocr_score >= 2
+                and self._text_similarity(current_value, ocr_value) < 0.65
+            ):
+                record.append_remark(f"{label}异常（PDF文本/OCR差异较大）")
+
+        unresolved_reasons = [
+            reason
+            for reason in trigger_reasons
+            if self._trigger_reason_still_unresolved(record, reason)
+        ]
+        for reason in unresolved_reasons:
+            record.append_remark(reason)
+
+        return changed
+
+    @staticmethod
+    def _same_invoice_number(left, right) -> bool:
+        return clean_text(str(left)).replace(" ", "") == clean_text(str(right)).replace(" ", "")
+
+    @staticmethod
+    def _same_amount(left, right) -> bool:
+        try:
+            return abs(float(left) - float(right)) <= 0.01
+        except (TypeError, ValueError):
+            return left == right
+
+    @staticmethod
+    def _same_text(left, right) -> bool:
+        return clean_text(str(left)) == clean_text(str(right))
+
+    @staticmethod
+    def _party_name_quality_score(value: str) -> int:
+        normalized = clean_text(value)
+        if not normalized:
+            return 0
+
+        compact = normalized.replace(" ", "")
+        score = 1
+        if any(suffix in normalized for suffix in ("公司", "企业", "店", "中心", "出版社")):
+            score += 3
+        if any("\u4e00" <= char <= "\u9fff" for char in normalized):
+            score += 1
+        if InvoiceBatchProcessor._party_name_issue("字段", normalized):
+            score -= 4
+        if len(compact) > 45:
+            score -= 2
+        return score
+
+    @staticmethod
+    def _text_similarity(left: str, right: str) -> float:
+        return SequenceMatcher(
+            None,
+            clean_text(left).replace(" ", ""),
+            clean_text(right).replace(" ", ""),
+        ).ratio()
+
+    @staticmethod
+    def _remove_resolved_missing_remark(record: InvoiceRecord, label: str) -> None:
+        missing_map = {
+            "发票号码": "缺少发票号码",
+            "金额": "缺少金额",
+            "开票日期": "缺少日期",
+            "购买方名称": "缺少购买方名称",
+            "销售方名称": "缺少销售方名称",
+        }
+        prefix = missing_map.get(label)
+        if prefix:
+            record.remove_remark_prefix(prefix)
+        if label == "金额":
+            record.remove_remark_prefix("金额异常")
+        record.remove_remark_prefix("关键信息识别不完整")
+
+    @staticmethod
+    def _refresh_parse_success(record: InvoiceRecord) -> None:
+        if not (record.invoice_number and record.total_amount is not None and record.invoice_date):
+            record.parse_success = False
+            return
+        if any(
+            token in record.remarks
+            for token in (
+                "金额异常",
+                "发票号码格式异常",
+                "开票日期格式异常",
+                "开票日期异常",
+            )
+        ):
+            record.parse_success = False
+            return
+        record.parse_success = True
+
+    @staticmethod
+    def _trigger_reason_still_unresolved(record: InvoiceRecord, reason: str) -> bool:
+        if "关键字段不完整" in reason:
+            return not record.parse_success
+        if "购买方名称" in reason:
+            return bool(InvoiceBatchProcessor._party_name_issue("购买方名称", record.buyer_name))
+        if "销售方名称" in reason:
+            return bool(InvoiceBatchProcessor._party_name_issue("销售方名称", record.seller_name))
+        return False
+
+    @staticmethod
+    def _has_core_field_conflict(record: InvoiceRecord) -> bool:
+        return CORE_FIELD_CONFLICT_PREFIX in record.remarks
+
+    @staticmethod
+    def _deduplicate_messages(messages: list[str]) -> list[str]:
+        deduplicated: list[str] = []
+        for message in messages:
+            if message and message not in deduplicated:
+                deduplicated.append(message)
+        return deduplicated

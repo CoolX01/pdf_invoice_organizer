@@ -68,6 +68,37 @@ class InvoiceParserTests(unittest.TestCase):
         self.assertIn("未从文本中识别到有效发票字段", record.remarks)
         self.assertNotIn("原文预览", record.remarks)
 
+    def test_red_invoice_negative_amount_is_parsed(self) -> None:
+        record = self._record()
+        text = """电子发票(普通发票)
+发票号码: 26412000001741590436
+开票日期: 2026年05月16日
+购买方信息 名称: 上海示例科技有限公司
+销售方信息 名称: 开封市涌动医疗技术有限公司
+红字发票
+价税合计(大写) (负数)壹佰肆拾壹圆整 (小写)¥-141.00
+"""
+
+        InvoiceParser().parse(record, text)
+
+        self.assertEqual(record.total_amount, -141.0)
+        self.assertTrue(record.parse_success)
+
+    def test_interleaved_buyer_seller_layout_is_parsed_by_order(self) -> None:
+        record = self._record()
+        text = """电子发票(普通发票)
+发票号码:26327000000877160964
+开票日期:2026年05月11日
+购 销 买 名称:上海华友金裕微电子有限公司 售 名称:阿迪达斯体育(中国)有限公司 方 方 信 信息统一社会信用代码/纳税人识别号:913100007836420840
+价税合计(大写) 贰佰伍拾陆圆整 (小写) ¥ 256.00
+"""
+
+        InvoiceParser().parse(record, text)
+
+        self.assertEqual(record.buyer_name, "上海华友金裕微电子有限公司")
+        self.assertEqual(record.seller_name, "阿迪达斯体育(中国)有限公司")
+        self.assertTrue(record.parse_success)
+
 
 if __name__ == "__main__":
     unittest.main()

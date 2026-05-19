@@ -7,6 +7,7 @@ from pathlib import Path
 from qt_compat import (
     QAbstractItemView,
     QColor,
+    QDesktopServices,
     QFileDialog,
     QFile,
     QDragEnterEvent,
@@ -21,10 +22,12 @@ from qt_compat import (
     QPushButton,
     QProgressBar,
     QSizePolicy,
+    QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
     Qt,
+    QUrl,
     QVBoxLayout,
     QWidget,
 )
@@ -70,18 +73,18 @@ class MainWindow(QMainWindow):
         self._append_log("软件已启动，可添加 PDF 文件开始使用。")
 
     def _build_ui(self) -> None:
-        central_widget = QWidget()
-        root_layout = QVBoxLayout(central_widget)
-        root_layout.setContentsMargins(18, 18, 18, 18)
-        root_layout.setSpacing(12)
+        self.page_stack = QStackedWidget()
+        self.main_page = QWidget()
+        root_layout = QVBoxLayout(self.main_page)
+        root_layout.setContentsMargins(14, 14, 14, 14)
+        root_layout.setSpacing(8)
 
         top_panel = self._build_top_panel()
         queue_panel = self._build_queue_panel()
         results_panel = self._build_results_panel()
-        bottom_panel = self._build_bottom_panel()
+        self.log_page = self._build_log_page()
 
-        queue_panel.setFixedHeight(122)
-        bottom_panel.setFixedHeight(170)
+        queue_panel.setFixedHeight(165)
         results_panel.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding,
@@ -90,124 +93,164 @@ class MainWindow(QMainWindow):
         root_layout.addWidget(top_panel)
         root_layout.addWidget(queue_panel)
         root_layout.addWidget(results_panel, 1)
-        root_layout.addWidget(bottom_panel)
 
-        self.setCentralWidget(central_widget)
+        self.page_stack.addWidget(self.main_page)
+        self.page_stack.addWidget(self.log_page)
+        self.setCentralWidget(self.page_stack)
         self._apply_styles()
 
     def _build_top_panel(self) -> QWidget:
         panel = QFrame()
         panel.setObjectName("TopPanel")
-        layout = QVBoxLayout(panel)
+        layout = QHBoxLayout(panel)
         layout.setContentsMargins(14, 12, 14, 12)
-        layout.setSpacing(8)
+        layout.setSpacing(12)
+
+        file_card = QFrame()
+        file_card.setObjectName("TopActionCard")
+        file_card.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
+        file_layout = QVBoxLayout(file_card)
+        file_layout.setContentsMargins(0, 10, 12, 10)
+        file_layout.setSpacing(8)
+
+        file_title_row = QHBoxLayout()
+        file_title_row.setSpacing(8)
+        file_title = QLabel("文件与导出")
+        file_title.setObjectName("SectionTitle")
+        file_title_row.addWidget(file_title)
+        file_title_row.addStretch(1)
+        file_layout.addLayout(file_title_row)
 
         button_row = QHBoxLayout()
         button_row.setSpacing(8)
 
         self.file_button = QPushButton("选择 PDF 文件")
+        self._configure_toolbar_button(self.file_button, minimum_width=150)
         self.file_button.clicked.connect(self.choose_files)
         button_row.addWidget(self.file_button)
 
         self.folder_button = QPushButton("选择文件夹")
+        self._configure_toolbar_button(self.folder_button, minimum_width=132)
         self.folder_button.clicked.connect(self.choose_folder)
         button_row.addWidget(self.folder_button)
 
         self.output_button = QPushButton("更改导出位置")
+        self._configure_toolbar_button(self.output_button, minimum_width=150)
         self.output_button.clicked.connect(self.choose_output_path)
         button_row.addWidget(self.output_button)
+        button_row.addStretch(1)
+        file_layout.addLayout(button_row)
+
+        self.output_path_label = QLabel(f"输出路径：{self.output_path}")
+        self.output_path_label.setObjectName("PathLabel")
+        self.output_path_label.setWordWrap(True)
+        file_layout.addWidget(self.output_path_label)
+
+        hint = QLabel("可选择 PDF 文件、选择文件夹，或直接把 PDF 文件拖拽到窗口中。")
+        hint.setObjectName("HintLabel")
+        file_layout.addWidget(hint)
+
+        status_card = QFrame()
+        status_card.setObjectName("TopStatusCard")
+        status_card.setMinimumWidth(430)
+        status_card.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
+        status_layout = QVBoxLayout(status_card)
+        status_layout.setContentsMargins(0, 10, 12, 10)
+        status_layout.setSpacing(8)
+
+        status_title_row = QHBoxLayout()
+        status_title_row.setSpacing(8)
+        status_title = QLabel("处理状态")
+        status_title.setObjectName("SectionTitle")
+        status_title_row.addWidget(status_title)
+        status_title_row.addStretch(1)
+
+        self.log_page_button = QPushButton("日志 / 状态")
+        self.log_page_button.setObjectName("HeaderActionButton")
+        self.log_page_button.setToolTip("查看详细运行日志和状态记录")
+        self._configure_toolbar_button(self.log_page_button, minimum_width=104)
+        self.log_page_button.clicked.connect(self._show_log_page)
+        status_title_row.addWidget(self.log_page_button)
+        status_layout.addLayout(status_title_row)
+
+        metric_row = QHBoxLayout()
+        metric_row.setSpacing(8)
 
         self.file_count_label = QLabel("当前文件：0")
-        button_row.addWidget(self.file_count_label)
+        self.file_count_label.setObjectName("TopMetricLabel")
+        self.file_count_label.setMinimumWidth(118)
+        metric_row.addWidget(self.file_count_label)
+
+        self.status_label = QLabel("状态：待命")
+        self.status_label.setObjectName("TopMetricLabel")
+        self.status_label.setMinimumWidth(178)
+        self.status_label.setWordWrap(True)
+        metric_row.addWidget(self.status_label, 1)
+
+        status_layout.addLayout(metric_row)
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
-        self.progress_bar.setFixedWidth(180)
-        button_row.addWidget(self.progress_bar)
+        self.progress_bar.setMinimumWidth(260)
+        self.progress_bar.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
+        status_layout.addWidget(self.progress_bar)
 
-        self.status_label = QLabel("状态：待命")
-        self.status_label.setMinimumWidth(170)
-        button_row.addWidget(self.status_label)
-
-        layout.addLayout(button_row)
-
-        self.output_path_label = QLabel(f"输出路径：{self.output_path}")
-        self.output_path_label.setWordWrap(True)
-        layout.addWidget(self.output_path_label)
-
-        hint = QLabel("可选择 PDF 文件、选择文件夹，或直接把 PDF 文件拖拽到窗口中。")
-        hint.setObjectName("HintLabel")
-        layout.addWidget(hint)
+        layout.addWidget(file_card, 3)
+        layout.addWidget(status_card, 2)
         return panel
 
     def _build_results_panel(self) -> QWidget:
         panel = QFrame()
         panel.setObjectName("ResultsPanel")
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setContentsMargins(16, 12, 16, 12)
         layout.setSpacing(8)
 
-        title_row = QHBoxLayout()
-        title_row.setSpacing(8)
-
-        self.start_button = QPushButton("开始分析")
-        self.start_button.setObjectName("PrimaryActionButton")
-        self.start_button.clicked.connect(self.start_analysis)
-        title_row.addWidget(self.start_button)
-
-        self.cancel_button = QPushButton("取消分析")
-        self.cancel_button.setObjectName("HeaderActionButton")
-        self.cancel_button.clicked.connect(self.cancel_analysis)
-        title_row.addWidget(self.cancel_button)
+        summary_row = QHBoxLayout()
+        summary_row.setSpacing(10)
 
         title = QLabel("解析结果预览")
         title.setObjectName("SectionTitle")
-        title_row.addWidget(title)
+        summary_row.addWidget(title)
 
         self.total_amount_label = QLabel("总金额：全部 0.00 / 去重 0.00 元")
-        self.total_amount_label.setObjectName("AmountSummary")
-        title_row.addWidget(self.total_amount_label)
+        self.total_amount_label.setObjectName("SummaryBadge")
+        self.total_amount_label.setMinimumWidth(340)
+        summary_row.addWidget(self.total_amount_label)
 
         self.duplicate_count_label = QLabel("相同文件：0 组 / 相同票号：0 组")
-        self.duplicate_count_label.setObjectName("AmountSummary")
-        title_row.addWidget(self.duplicate_count_label)
+        self.duplicate_count_label.setObjectName("SummaryBadge")
+        self.duplicate_count_label.setMinimumWidth(300)
+        summary_row.addWidget(self.duplicate_count_label)
 
-        self.remove_duplicates_button = QPushButton("从结果中移除重复项")
-        self.remove_duplicates_button.setObjectName("HeaderActionButton")
-        self.remove_duplicates_button.clicked.connect(self.remove_duplicate_files)
-        title_row.addWidget(self.remove_duplicates_button)
+        summary_row.addStretch(1)
+        layout.addLayout(summary_row)
 
-        self.delete_local_duplicates_button = QPushButton("移到废纸篓/回收站")
-        self.delete_local_duplicates_button.setObjectName("DangerActionButton")
-        self.delete_local_duplicates_button.clicked.connect(self.delete_duplicate_local_files)
-        title_row.addWidget(self.delete_local_duplicates_button)
-
-        self.export_button = QPushButton("输出Excel")
-        self.export_button.setObjectName("PrimaryActionButton")
-        self.export_button.clicked.connect(self.export_excel)
-        title_row.addWidget(self.export_button)
-
-        self.clear_button = QPushButton("清空列表")
-        self.clear_button.setObjectName("HeaderActionButton")
-        self.clear_button.clicked.connect(self.clear_files)
-        title_row.addWidget(self.clear_button)
-
-        title_row.addStretch(1)
-
-        layout.addLayout(title_row)
-        layout.addLayout(self._build_filter_row())
+        layout.addWidget(self._build_results_controls_panel())
 
         self.table = QTableWidget(0, len(PREVIEW_HEADERS))
         self.table.setHorizontalHeaderLabels(PREVIEW_HEADERS)
         self.table.setAlternatingRowColors(True)
         self.table.setSortingEnabled(False)
+        self.table.setWordWrap(False)
         self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setDefaultSectionSize(28)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.horizontalHeader().setStretchLastSection(True)
         header = self.table.horizontalHeader()
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
+        header.setMinimumSectionSize(72)
         default_widths = [70, 220, 100, 180, 120, 110, 220, 220, 260, 360]
         for column, width in enumerate(default_widths):
             self.table.setColumnWidth(column, width)
@@ -215,37 +258,149 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.table, 1)
         return panel
 
-    def _build_filter_row(self) -> QHBoxLayout:
-        filter_row = QHBoxLayout()
-        filter_row.setSpacing(8)
-        filter_row.addWidget(QLabel("筛选："))
+    def _build_results_controls_panel(self) -> QWidget:
+        controls_panel = QFrame()
+        controls_panel.setObjectName("ResultsControlsPanel")
+        controls_panel.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
+        controls_row = QHBoxLayout(controls_panel)
+        controls_row.setContentsMargins(8, 8, 8, 8)
+        controls_row.setSpacing(8)
+
+        self.start_button = QPushButton("开始分析")
+        self.start_button.setObjectName("PrimaryActionButton")
+        self._configure_toolbar_button(self.start_button, minimum_width=94)
+        self.start_button.clicked.connect(self.start_analysis)
+
+        self.cancel_button = QPushButton("取消分析")
+        self.cancel_button.setObjectName("HeaderActionButton")
+        self._configure_toolbar_button(self.cancel_button, minimum_width=94)
+        self.cancel_button.clicked.connect(self.cancel_analysis)
+
+        self.remove_duplicates_button = QPushButton("移除重复项")
+        self.remove_duplicates_button.setObjectName("HeaderActionButton")
+        self.remove_duplicates_button.setToolTip("只从结果表移除重复项，不删除本地 PDF 文件。")
+        self._configure_toolbar_button(self.remove_duplicates_button, minimum_width=120)
+        self.remove_duplicates_button.clicked.connect(self.remove_duplicate_files)
+
+        self.delete_local_duplicates_button = QPushButton("移到废纸篓")
+        self.delete_local_duplicates_button.setObjectName("DangerActionButton")
+        self.delete_local_duplicates_button.setToolTip("把本地重复 PDF 移到系统废纸篓/回收站。")
+        self._configure_toolbar_button(self.delete_local_duplicates_button, minimum_width=112)
+        self.delete_local_duplicates_button.clicked.connect(self.delete_duplicate_local_files)
+
+        self.export_button = QPushButton("输出 Excel")
+        self.export_button.setObjectName("PrimaryActionButton")
+        self._configure_toolbar_button(self.export_button, minimum_width=112)
+        self.export_button.clicked.connect(self.export_excel)
+
+        self.clear_button = QPushButton("清空列表")
+        self.clear_button.setObjectName("HeaderActionButton")
+        self._configure_toolbar_button(self.clear_button, minimum_width=90)
+        self.clear_button.clicked.connect(self.clear_files)
 
         filter_specs = [
             ("all", "全部"),
-            ("failed", "仅失败"),
-            ("review", "仅需复核"),
-            ("duplicate", "仅重复"),
+            ("failed", "失败"),
+            ("review", "复核"),
+            ("duplicate", "重复"),
         ]
+        filter_widgets: list[QWidget] = []
         for filter_name, label in filter_specs:
             button = QPushButton(label)
             button.setObjectName("FilterButton")
             button.setCheckable(True)
+            self._configure_toolbar_button(button, minimum_width=64)
             button.clicked.connect(lambda checked=False, name=filter_name: self._set_result_filter(name))
             self.filter_buttons[filter_name] = button
-            filter_row.addWidget(button)
+            filter_widgets.append(button)
 
-        self.filter_status_label = QLabel("显示：0 / 0")
-        self.filter_status_label.setObjectName("HintLabel")
-        filter_row.addWidget(self.filter_status_label)
-        filter_row.addStretch(1)
+        self.filter_status_label = QLabel("显示 0 / 0")
+        self.filter_status_label.setObjectName("FilterStatusLabel")
+        self.filter_status_label.setMinimumWidth(118)
+        self.filter_status_label.setSizePolicy(
+            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Fixed,
+        )
+        filter_widgets.append(self.filter_status_label)
         self._refresh_filter_buttons()
-        return filter_row
+
+        controls_row.addWidget(
+            self._build_control_group(
+                "分析",
+                [self.start_button, self.cancel_button],
+                minimum_width=220,
+            ),
+            2,
+        )
+        controls_row.addWidget(
+            self._build_control_group(
+                "筛选显示",
+                filter_widgets,
+                minimum_width=430,
+            ),
+            5,
+        )
+        controls_row.addWidget(
+            self._build_control_group(
+                "重复处理",
+                [self.remove_duplicates_button, self.delete_local_duplicates_button],
+                minimum_width=270,
+            ),
+            3,
+        )
+        controls_row.addWidget(
+            self._build_control_group(
+                "导出",
+                [self.export_button, self.clear_button],
+                minimum_width=220,
+            ),
+            2,
+        )
+
+        return controls_panel
+
+    def _build_control_group(
+        self,
+        title: str,
+        widgets: list[QWidget],
+        *,
+        minimum_width: int,
+    ) -> QWidget:
+        group = QFrame()
+        group.setObjectName("ControlGroup")
+        group.setMinimumWidth(minimum_width)
+        group.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
+
+        group_layout = QVBoxLayout(group)
+        group_layout.setContentsMargins(8, 6, 8, 8)
+        group_layout.setSpacing(4)
+
+        title_label = QLabel(title)
+        title_label.setObjectName("ControlGroupTitle")
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        group_layout.addWidget(title_label)
+
+        controls = QHBoxLayout()
+        controls.setContentsMargins(0, 0, 0, 0)
+        controls.setSpacing(6)
+        controls.addStretch(1)
+        for widget in widgets:
+            controls.addWidget(widget)
+        controls.addStretch(1)
+        group_layout.addLayout(controls)
+        return group
 
     def _build_queue_panel(self) -> QWidget:
         panel = QFrame()
         panel.setObjectName("QueuePanel")
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(14, 10, 14, 10)
+        layout.setContentsMargins(14, 8, 14, 8)
         layout.setSpacing(6)
 
         title_row = QHBoxLayout()
@@ -262,27 +417,77 @@ class MainWindow(QMainWindow):
         layout.addLayout(title_row)
 
         self.file_list_widget = QListWidget()
-        self.file_list_widget.setFixedHeight(72)
+        self.file_list_widget.setFixedHeight(112)
+        self.file_list_widget.setUniformItemSizes(True)
         self.file_list_widget.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         layout.addWidget(self.file_list_widget)
         return panel
 
-    def _build_bottom_panel(self) -> QWidget:
-        panel = QFrame()
-        panel.setObjectName("BottomPanel")
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(14, 10, 14, 10)
-        layout.setSpacing(6)
+    def _build_log_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
 
-        log_title = QLabel("日志 / 状态")
-        log_title.setObjectName("SectionTitle")
-        layout.addWidget(log_title)
+        header_panel = QFrame()
+        header_panel.setObjectName("LogHeaderPanel")
+        header_layout = QHBoxLayout(header_panel)
+        header_layout.setContentsMargins(14, 12, 14, 12)
+        header_layout.setSpacing(10)
+
+        self.back_to_main_button = QPushButton("返回主界面")
+        self.back_to_main_button.setObjectName("HeaderActionButton")
+        self._configure_toolbar_button(self.back_to_main_button, minimum_width=118)
+        self.back_to_main_button.clicked.connect(self._show_main_page)
+        header_layout.addWidget(self.back_to_main_button)
+
+        title = QLabel("日志 / 状态")
+        title.setObjectName("SectionTitle")
+        header_layout.addWidget(title)
+        header_layout.addStretch(1)
+
+        self.log_file_summary_label = QLabel("当前文件：0")
+        self.log_file_summary_label.setObjectName("SummaryBadge")
+        self.log_file_summary_label.setMinimumWidth(120)
+        header_layout.addWidget(self.log_file_summary_label)
+
+        self.log_status_summary_label = QLabel("状态：待命")
+        self.log_status_summary_label.setObjectName("SummaryBadge")
+        self.log_status_summary_label.setMinimumWidth(220)
+        header_layout.addWidget(self.log_status_summary_label)
+
+        layout.addWidget(header_panel)
+
+        content_panel = QFrame()
+        content_panel.setObjectName("LogContentPanel")
+        content_layout = QVBoxLayout(content_panel)
+        content_layout.setContentsMargins(14, 12, 14, 14)
+        content_layout.setSpacing(8)
+
+        intro_row = QHBoxLayout()
+        intro_row.setSpacing(8)
+
+        intro = QLabel("这里显示程序运行、识别、导出和异常提示的详细记录；主界面默认隐藏这些细节。")
+        intro.setObjectName("HintLabel")
+        intro_row.addWidget(intro)
+
+        intro_row.addStretch(1)
+
+        self.log_count_label = QLabel("日志条数：0")
+        self.log_count_label.setObjectName("HintLabel")
+        intro_row.addWidget(self.log_count_label)
+        content_layout.addLayout(intro_row)
 
         self.log_box = QTextEdit()
         self.log_box.setReadOnly(True)
-        self.log_box.setFixedHeight(112)
-        layout.addWidget(self.log_box)
-        return panel
+        self.log_box.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
+        content_layout.addWidget(self.log_box, 1)
+
+        layout.addWidget(content_panel, 1)
+        return page
 
     def choose_files(self) -> None:
         file_paths, _ = QFileDialog.getOpenFileNames(
@@ -368,7 +573,7 @@ class MainWindow(QMainWindow):
         self.table.setRowCount(0)
         self._apply_result_filter()
         self.progress_bar.setValue(0)
-        self.status_label.setText("状态：待命")
+        self._set_status("状态：待命")
         self._update_total_amount_label([])
         self.file_count_label.setText("当前文件：0")
         self.queue_count_label.setText("数量：0")
@@ -532,7 +737,7 @@ class MainWindow(QMainWindow):
             self._warn("提示", "请先添加 PDF 文件后再开始分析。")
             return
 
-        self.status_label.setText("状态：分析中")
+        self._set_status("状态：分析中")
         self.export_button.setEnabled(False)
         self.start_button.setEnabled(False)
         self._append_log(f"开始分析，共 {len(self.selected_files)} 个文件。")
@@ -563,7 +768,7 @@ class MainWindow(QMainWindow):
             return
         self.worker.cancel()
         self.cancel_button.setEnabled(False)
-        self.status_label.setText("状态：正在取消，等待当前文件处理结束")
+        self._set_status("状态：正在取消，等待当前文件处理结束")
         self._append_log("已请求取消分析，当前文件处理结束后将停止。")
 
     def export_excel(self) -> None:
@@ -606,8 +811,9 @@ class MainWindow(QMainWindow):
             self.output_path_label.setText(f"输出路径：{self.output_path}")
             self.last_exported_path = exported_path
             self.last_export_signature = current_signature
-            self.status_label.setText("状态：导出完成")
+            self._set_status("状态：导出完成")
             self._append_log(f"Excel 导出成功：{exported_path}（{len(self.records)} 条）")
+            self._confirm_open_exported_file(exported_path)
         except Exception as exc:
             logger.exception("Export failed")
             QMessageBox.critical(
@@ -684,7 +890,7 @@ class MainWindow(QMainWindow):
     def _on_progress_changed(self, current: int, total: int, message: str) -> None:
         percentage = 0 if total == 0 else int(current / total * 100)
         self.progress_bar.setValue(min(percentage, 100))
-        self.status_label.setText(f"状态：{message}")
+        self._set_status(f"状态：{message}")
         if message.startswith("正在识别") and "：" in message:
             current_name = message.rsplit("：", 1)[-1].strip()
             for path in self.selected_files:
@@ -700,7 +906,7 @@ class MainWindow(QMainWindow):
         self.records = records
         self.analysis_completed = True
         self.progress_bar.setValue(100)
-        self.status_label.setText("状态：分析完成")
+        self._set_status("状态：分析完成")
         self._populate_table(records)
         self._update_total_amount_label(records)
         self._apply_record_statuses(records)
@@ -721,7 +927,7 @@ class MainWindow(QMainWindow):
         self.worker = None
         self.records = records
         self.analysis_completed = bool(records)
-        self.status_label.setText("状态：分析已取消")
+        self._set_status("状态：分析已取消")
         self._populate_table(records)
         self._update_total_amount_label(records)
         self._apply_record_statuses(records)
@@ -752,7 +958,7 @@ class MainWindow(QMainWindow):
     def _on_analysis_failed(self, message: str) -> None:
         self.worker = None
         self.progress_bar.setValue(0)
-        self.status_label.setText("状态：分析失败")
+        self._set_status("状态：分析失败")
         self.analysis_completed = False
         self._update_total_amount_label([])
         for path in self.selected_files:
@@ -782,6 +988,7 @@ class MainWindow(QMainWindow):
             for column_index, value in enumerate(values):
                 item = QTableWidgetItem(value)
                 item.setToolTip(value)
+                item.setForeground(self._table_item_foreground(record, column_index))
                 if background_color is not None:
                     item.setBackground(background_color)
                 if column_index in (0, 2, 3, 4, 5):
@@ -789,6 +996,7 @@ class MainWindow(QMainWindow):
                         Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
                     )
                 self.table.setItem(row_index, column_index, item)
+            self.table.setRowHeight(row_index, 28)
         self._apply_result_filter()
 
     def _set_result_filter(self, filter_name: str) -> None:
@@ -808,7 +1016,7 @@ class MainWindow(QMainWindow):
             if visible:
                 visible_count += 1
         if hasattr(self, "filter_status_label"):
-            self.filter_status_label.setText(f"显示：{visible_count} / {len(self.records)}")
+            self.filter_status_label.setText(f"显示 {visible_count} / {len(self.records)}")
 
     def _record_matches_filter(self, record: InvoiceRecord) -> bool:
         if self.active_result_filter == "failed":
@@ -821,14 +1029,25 @@ class MainWindow(QMainWindow):
 
     def _row_background_color(self, record: InvoiceRecord):
         if record.duplicate_invoice_conflict:
-            return QColor("#FADBD8")
+            return QColor("#FEE2E2")
         if not record.parse_success:
-            return QColor("#FDEDEC")
+            return QColor("#FEECEC")
         if record.duplicate_file or record.duplicate_invoice:
-            return QColor("#FFF2CC")
+            return QColor("#FEF3C7")
         if self._needs_review(record):
-            return QColor("#FEF9E7")
+            return QColor("#FEF9C3")
         return None
+
+    def _table_item_foreground(self, record: InvoiceRecord, column_index: int) -> QColor:
+        if column_index != 2:
+            return QColor("#111827")
+        if record.duplicate_invoice_conflict or not record.parse_success:
+            return QColor("#991B1B")
+        if record.duplicate_file or record.duplicate_invoice:
+            return QColor("#92400E")
+        if self._needs_review(record):
+            return QColor("#854D0E")
+        return QColor("#166534")
 
     def show_record_detail(self, row_index: int, column_index: int = 0) -> None:
         if row_index < 0 or row_index >= len(self.records):
@@ -868,6 +1087,7 @@ class MainWindow(QMainWindow):
     def _refresh_file_queue(self) -> None:
         self.file_list_widget.clear()
         self.queue_count_label.setText(f"数量：{len(self.selected_files)}")
+        self._sync_log_page_summary()
         for path in self.selected_files:
             status = self.file_statuses.get(self._path_key(path), "待分析")
             item = QListWidgetItem(f"[{status}] {path.name}")
@@ -901,7 +1121,7 @@ class MainWindow(QMainWindow):
         )
 
     def _needs_review(self, record: InvoiceRecord) -> bool:
-        review_tokens = ("缺少", "失败", "疑似重复", "高风险", "异常", "OCR 置信度偏低")
+        review_tokens = ("缺少", "失败", "疑似重复", "高风险", "异常", "不一致", "需复核", "OCR 置信度偏低")
         return any(token in record.remarks for token in review_tokens)
 
     def _record_status_label(self, record: InvoiceRecord) -> str:
@@ -948,7 +1168,7 @@ class MainWindow(QMainWindow):
         self.table.setRowCount(0)
         self._apply_result_filter()
         self.progress_bar.setValue(0)
-        self.status_label.setText("状态：待命")
+        self._set_status("状态：待命")
         self._update_total_amount_label([])
         self.file_statuses.clear()
         self._refresh_file_queue()
@@ -1080,6 +1300,31 @@ class MainWindow(QMainWindow):
         self._append_log(f"配置的 Excel 模板不存在，已使用默认导出格式：{template_path}")
         return None
 
+    def _confirm_open_exported_file(self, exported_path: Path) -> None:
+        reply = QMessageBox.question(
+            self,
+            "Excel 导出完成",
+            (
+                f"Excel 文件已生成：\n{exported_path}\n\n"
+                "是否立即打开这个 Excel 文件？"
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        opened = QDesktopServices.openUrl(QUrl.fromLocalFile(str(exported_path)))
+        if opened:
+            self._append_log(f"已请求系统打开 Excel 文件：{exported_path}")
+            return
+
+        self._warn(
+            "打开失败",
+            f"系统未能打开这个 Excel 文件，请手动打开：\n{exported_path}",
+        )
+        self._append_log(f"打开 Excel 文件失败：{exported_path}")
+
     def _build_unique_export_path(self, output_path: Path) -> Path:
         suffix = output_path.suffix or ".xlsx"
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1139,9 +1384,31 @@ class MainWindow(QMainWindow):
         self.folder_button.setEnabled(not running)
         self.output_button.setEnabled(not running)
 
+    def _show_log_page(self) -> None:
+        self._sync_log_page_summary()
+        self.page_stack.setCurrentWidget(self.log_page)
+
+    def _show_main_page(self) -> None:
+        self.page_stack.setCurrentWidget(self.main_page)
+
+    def _set_status(self, text: str) -> None:
+        self.status_label.setText(text)
+        if hasattr(self, "log_status_summary_label"):
+            self.log_status_summary_label.setText(text)
+
+    def _sync_log_page_summary(self) -> None:
+        if hasattr(self, "log_file_summary_label"):
+            self.log_file_summary_label.setText(f"当前文件：{len(self.selected_files)}")
+        if hasattr(self, "log_status_summary_label"):
+            self.log_status_summary_label.setText(self.status_label.text())
+
     def _append_log(self, message: str) -> None:
         timestamp = datetime.now().strftime("%H:%M:%S")
         self.log_box.append(f"[{timestamp}] {message}")
+        if hasattr(self, "log_count_label"):
+            self.log_count_label.setText(
+                f"日志条数：{self.log_box.document().blockCount()}"
+            )
 
     def _warn(self, title: str, message: str) -> None:
         QMessageBox.warning(self, title, message)
@@ -1152,119 +1419,241 @@ class MainWindow(QMainWindow):
         filename = f"发票汇总_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
         return base_dir / filename
 
+    def _configure_toolbar_button(
+        self,
+        button: QPushButton,
+        *,
+        minimum_width: int,
+    ) -> None:
+        button.setMinimumWidth(minimum_width)
+        button.setSizePolicy(
+            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Fixed,
+        )
+
     def _apply_styles(self) -> None:
         self.setStyleSheet(
             """
-            QMainWindow {
-                background: #f3f5f7;
+            QWidget {
+                color: #111827;
+                font-size: 14px;
             }
-            QFrame#TopPanel, QFrame#QueuePanel, QFrame#ResultsPanel, QFrame#BottomPanel {
-                background: white;
-                border: 1px solid #d9e0e6;
+            QMainWindow {
+                background: #eef3f7;
+            }
+            QFrame#TopPanel, QFrame#QueuePanel, QFrame#ResultsPanel,
+            QFrame#LogHeaderPanel, QFrame#LogContentPanel {
+                background: #ffffff;
+                border: 1px solid #d7e1ea;
+                border-radius: 12px;
+            }
+            QFrame#TopPanel {
+                background: #f5f9fc;
+            }
+            QFrame#TopActionCard, QFrame#TopStatusCard {
+                background: #ffffff;
+                border: 1px solid #dbe6ef;
                 border-radius: 10px;
+            }
+            QFrame#ResultsControlsPanel {
+                background: #f5f9fc;
+                border: 1px solid #d8e5ee;
+                border-radius: 10px;
+            }
+            QFrame#ControlGroup {
+                background: #ffffff;
+                border: 1px solid #dbe6ef;
+                border-radius: 9px;
             }
             QLabel#SectionTitle {
                 font-size: 16px;
-                font-weight: 600;
-                color: #1f2937;
+                font-weight: 700;
+                color: #1e293b;
+            }
+            QLabel#ControlGroupTitle {
+                font-size: 11px;
+                font-weight: 700;
+                color: #64748b;
+                letter-spacing: 0.5px;
             }
             QLabel#AmountSummary {
                 font-size: 14px;
                 font-weight: 600;
                 color: #3d6f8e;
             }
+            QLabel#SummaryBadge {
+                font-size: 14px;
+                font-weight: 700;
+                color: #245e7a;
+                background: #edf8fd;
+                border: 1px solid #cce7f3;
+                border-radius: 8px;
+                padding: 6px 10px;
+            }
+            QLabel#TopStatusLabel,
+            QLabel#InlineLabel {
+                color: #334155;
+                font-weight: 600;
+            }
+            QLabel#TopMetricLabel {
+                color: #1e293b;
+                font-size: 13px;
+                font-weight: 700;
+                background: #edf8fd;
+                border: 1px solid #cce7f3;
+                border-radius: 8px;
+                padding: 5px 9px;
+            }
+            QLabel#PathLabel {
+                color: #1f2937;
+                font-size: 12px;
+                font-weight: 600;
+            }
             QLabel#HintLabel {
-                color: #6b7280;
+                color: #475569;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            QLabel#FilterStatusLabel {
+                color: #475569;
+                font-weight: 700;
+                padding-left: 4px;
             }
             QPushButton {
-                min-height: 34px;
+                color: #1e293b;
+                min-height: 32px;
                 padding: 0 14px;
-                border-radius: 6px;
-                border: 1px solid #b8c4d0;
+                border-radius: 8px;
+                border: 1px solid #b7c6d4;
                 background: #f8fafc;
+                font-weight: 600;
             }
             QPushButton:hover {
-                background: #eef4f8;
+                background: #edf5fb;
+                border-color: #7fa0b6;
+            }
+            QPushButton:pressed {
+                background: #dfeef7;
             }
             QPushButton#PrimaryActionButton {
                 font-weight: 700;
-                color: #1f3442;
-                background: #e7f0f6;
-                border: 2px solid #6a8496;
+                color: #15384a;
+                background: #dff0f8;
+                border: 2px solid #5d8398;
             }
             QPushButton#PrimaryActionButton:hover {
-                background: #dceaf2;
-                border-color: #567183;
+                background: #d1e9f5;
+                border-color: #486f85;
             }
             QPushButton#HeaderActionButton {
                 font-weight: 600;
-                color: #274151;
+                color: #203748;
                 background: #f8fafc;
-                border: 2px solid #6a8496;
+                border: 2px solid #7790a2;
             }
             QPushButton#HeaderActionButton:hover {
-                background: #eef4f8;
-                border-color: #567183;
+                background: #edf5fb;
+                border-color: #5e7a8f;
             }
             QPushButton#FilterButton {
+                color: #334155;
                 min-height: 28px;
-                padding: 0 10px;
+                padding: 0 12px;
                 font-weight: 600;
+                background: #ffffff;
+                border: 1px solid #b9c8d6;
             }
             QPushButton#FilterButton:checked {
-                color: #1f3442;
-                background: #dceaf2;
-                border: 2px solid #3d6f8e;
+                color: #10384c;
+                background: #d9eef8;
+                border: 2px solid #2f6f89;
             }
             QPushButton#DangerActionButton {
                 font-weight: 600;
-                color: #7d2d2f;
-                background: #fff4f2;
-                border: 2px solid #dba6a3;
+                color: #8a2428;
+                background: #fff1f0;
+                border: 2px solid #d08f8b;
             }
             QPushButton#DangerActionButton:hover {
-                background: #fde8e5;
-                border-color: #c88986;
+                background: #ffe4e1;
+                border-color: #bd6f6a;
             }
             QPushButton:disabled {
-                color: #9aa6b2;
-                background: #f4f4f4;
-                border-color: #d6dce1;
+                color: #64748b;
+                background: #eef2f6;
+                border-color: #cbd5df;
+            }
+            QPushButton#PrimaryActionButton:disabled,
+            QPushButton#HeaderActionButton:disabled,
+            QPushButton#DangerActionButton:disabled,
+            QPushButton#FilterButton:disabled {
+                color: #64748b;
+                background: #eef2f6;
+                border-color: #cbd5df;
             }
             QTableWidget {
-                gridline-color: #e5e7eb;
-                background: white;
-                alternate-background-color: #f8fbfd;
+                color: #111827;
+                font-size: 12px;
+                gridline-color: #dfe6ed;
+                background: #ffffff;
+                alternate-background-color: #f7fafc;
+                selection-background-color: #cfe8f3;
+                selection-color: #0f172a;
+                border: 1px solid #ccd7e2;
+                border-radius: 6px;
+            }
+            QTableWidget::item {
+                padding: 3px 6px;
             }
             QHeaderView::section {
-                background: #e9eff5;
-                padding: 6px;
+                color: #334155;
+                font-size: 12px;
+                background: #e7eef5;
+                padding: 5px 6px;
                 border: 0;
                 border-right: 1px solid #dce3ea;
                 border-bottom: 1px solid #dce3ea;
-                font-weight: 600;
+                font-weight: 700;
             }
             QTextEdit {
-                background: #fbfcfd;
-                border: 1px solid #d9e0e6;
+                color: #1f2937;
+                background: #fbfdff;
+                border: 1px solid #d7e1ea;
                 border-radius: 8px;
+                padding: 6px;
+                selection-background-color: #cfe8f3;
+                selection-color: #0f172a;
             }
             QListWidget {
-                background: #fbfcfd;
-                border: 1px solid #d9e0e6;
+                color: #1f2937;
+                font-size: 12px;
+                background: #fbfdff;
+                border: 1px solid #d7e1ea;
                 border-radius: 8px;
-                padding: 4px;
+                padding: 3px;
+                selection-background-color: #d9eef8;
+                selection-color: #0f172a;
+            }
+            QListWidget::item {
+                color: #1f2937;
+                min-height: 18px;
+                padding: 1px 6px;
+            }
+            QListWidget::item:alternate {
+                background: #f7fafc;
             }
             QProgressBar {
+                color: #0f172a;
                 min-height: 22px;
                 border: 1px solid #c7d2da;
-                border-radius: 6px;
-                background: #f6f8fa;
+                border-radius: 8px;
+                background: #e8eef4;
                 text-align: center;
+                font-weight: 700;
             }
             QProgressBar::chunk {
-                background: #3d6f8e;
-                border-radius: 5px;
+                background: #9ed4e7;
+                border-radius: 7px;
             }
             """
         )

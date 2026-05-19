@@ -10,6 +10,7 @@ __pycache__/
 .venv_windows/
 venv/
 build/
+output/
 app/mac/*
 !app/mac/README.md
 app/mac_intel/*

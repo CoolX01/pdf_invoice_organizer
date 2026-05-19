@@ -34,7 +34,7 @@ python main.py
 - 批量导入 PDF 发票
 - 支持拖拽 PDF 到窗口
 - 导入时校验 PDF 后缀、文件大小和 PDF 文件头，跳过异常文件
-- 优先直接提取 PDF 文本，扫描版或字体异常 PDF 会自动尝试 OCR 兜底
+- 优先直接提取 PDF 文本；字段缺失、版式错序或疑似串字段时会自动 OCR 复核/补全
 - 在 GUI 中预览解析结果、状态、失败/复核原因、总金额和重复组数
 - 支持按全部、失败、需复核、重复筛选结果，并用颜色高亮问题行
 - 支持双击结果行查看发票详情、OCR 信息和原文预览
@@ -120,7 +120,14 @@ python -m compileall main.py source tests
 python -m unittest discover -s tests
 ```
 
-当前测试覆盖了解析器、批处理去重、Excel 导出、配置读写、PDF 文件校验和文本提取 fallback。真实 OCR 与完整打包验证仍建议作为手动或发布前检查。
+当前测试覆盖了解析器、批处理去重、Excel 导出、配置读写、PDF 文件校验、文本提取 fallback 和自动 OCR 复核逻辑。真实 OCR 与完整打包验证仍建议作为手动或发布前检查。
+
+## 版本与 GitHub 管理
+
+- 版本管理规则见 [docs/VERSIONING.md](docs/VERSIONING.md)。
+- GitHub 首页、Issue、PR、Actions 和 Release 维护规则见 [docs/GITHUB_MANAGEMENT.md](docs/GITHUB_MANAGEMENT.md)。
+- 主要变更记录见 [CHANGELOG.md](CHANGELOG.md)。
+- 本仓库使用 PR 合并到 `main`，正式发布包通过 GitHub Releases 分发。
 
 ## 运行方式说明
 
