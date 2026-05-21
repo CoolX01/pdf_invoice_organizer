@@ -1,20 +1,51 @@
 # PDF 发票自动整理归纳工具
 
-一个基于 Python + Qt 的本地桌面工具，用于批量导入 PDF 发票、解析关键信息、在界面中预览结果，并导出 Excel。
+一个本地运行的 Python + Qt 桌面工具，用于批量识别 PDF 发票、复核异常记录、去重并导出 Excel 汇总表。
 
 ![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
 ![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Windows-lightgrey)
+![Release](https://img.shields.io/github/v/release/CoolX01/pdf_invoice_organizer)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-这个仓库保留源码、配置、打包脚本和文档，不提交本地虚拟环境、构建目录、`.app`、`.exe`、压缩包等产物。
+## 下载
+
+- 最新版本：[GitHub Releases](https://github.com/CoolX01/pdf_invoice_organizer/releases/latest)
+- Windows 发布包：下载 Release 页面中的 `PDF-Invoice-Organizer-windows-*.zip`，解压后运行程序。
+- macOS 用户可先按下方“源码运行”方式启动；如需打包，请参考仓库内打包脚本和平台说明。
 
 ## 适用场景
 
-- 批量整理 PDF 发票并提取关键信息
-- 本地离线处理，不依赖在线上传
-- 导出 Excel 供报销、对账或归档使用
+- 批量整理 PDF 发票，提取发票号码、金额、日期、购销方等字段。
+- 本地处理发票文件，避免把敏感票据上传到第三方在线服务。
+- 导出 Excel，用于报销、对账、归档或人工复核。
 
-## 快速开始
+## 界面预览
+
+![界面截图](source/assets/screenshot.png)
+
+## 功能亮点
+
+- 批量导入 PDF 文件或整个文件夹，支持拖拽添加。
+- 自动校验 PDF 后缀、文件大小和文件头，跳过异常文件。
+- 优先读取 PDF 文本层；字段缺失、版式错序或疑似串字段时自动 OCR 复核/补全。
+- 在界面中查看识别状态、失败原因、需复核记录、重复文件和重复票号。
+- 支持按“全部 / 失败 / 复核 / 重复”筛选结果，并用颜色提示风险行。
+- 支持相同文件去重、相同发票号码标记，以及金额 / 日期 / 销售方冲突提示。
+- 导出 `.xlsx`，自动生成“问题汇总”工作表，便于定位异常记录。
+- 导出目标已存在时自动另存为带时间戳的新文件，避免覆盖旧结果。
+
+## 安全边界
+
+- 默认不会自动重命名、移动、删除或归档 PDF 原文件。
+- “移到废纸篓/回收站”只针对检测到的重复本地文件，并会弹窗二次确认。
+- 运行数据保存在系统用户目录；项目目录不保存用户发票数据。
+- Issue 或截图中请先脱敏公司名、税号、金额、发票号码等敏感信息。
+
+运行数据位置详见 [runtime/README.md](runtime/README.md)。
+
+## 源码运行
+
+环境要求：Python 3.9+，macOS 或 Windows。
 
 ```bash
 python3 -m venv .venv
@@ -23,93 +54,12 @@ pip install -r source/requirements.txt
 python main.py
 ```
 
-## 界面截图
+Windows PowerShell 可使用：
 
-![界面截图](source/assets/screenshot.png)
-
-这张图是本机实际运行时的窗口截屏，用来展示当前界面布局和信息层级。
-
-## 功能概览
-
-- 批量导入 PDF 发票
-- 支持拖拽 PDF 到窗口
-- 导入时校验 PDF 后缀、文件大小和 PDF 文件头，跳过异常文件
-- 优先直接提取 PDF 文本；字段缺失、版式错序或疑似串字段时会自动 OCR 复核/补全
-- 在 GUI 中预览解析结果、状态、失败/复核原因、总金额和重复组数
-- 支持按全部、失败、需复核、重复筛选结果，并用颜色高亮问题行
-- 支持双击结果行查看发票详情、OCR 信息和原文预览
-- 支持金额、日期、发票号码等关键字段校验
-- 支持重复文件识别、重复发票号码标记；同票号但金额/日期/销售方不一致会标为高风险冲突
-- 支持从结果中移除重复项；也可在二次确认后将本地重复文件移到系统回收站/废纸篓
-- 支持一键导出全部结果为 `.xlsx`
-- 导出的 Excel 自动包含“问题汇总”工作表，方便定位失败、重复和需复核记录
-- 如目标 Excel 已存在，会自动另存为带时间戳的新文件，避免覆盖旧结果
-
-> 当前版本重点是“识别 + 预览 + Excel 汇总”。PDF 原文件的自动重命名、复制归档目录、归档后删除原文件等流程尚未作为默认功能开放；如需启用这类高风险操作，建议先做“预览重命名结果 → 冲突检测 → 复制校验 → 再人工确认”的安全流程。
-
-## 仓库结构
-
-```text
-pdf_invoice_organizer/
-├── app/
-│   ├── mac/
-│   ├── mac_intel/
-│   └── windows/
-├── release/
-│   └── mac/
-│       ├── apple_silicon/
-│       └── intel/
-├── runtime/
-│   └── README.md
-├── source/
-│   ├── app.py
-│   ├── assets/
-│   ├── config/
-│   ├── exporters/
-│   ├── models/
-│   ├── parsers/
-│   ├── services/
-│   ├── ui/
-│   └── utils/
-├── tools/
-│   ├── build_mac_intel.command
-│   ├── build_windows.bat
-│   ├── invoice_organizer.spec
-│   ├── invoice_organizer_windows.spec
-│   └── start_invoice_app.bat
-├── build_mac_intel.command
-├── build_windows.bat
-├── main.py
-├── start_invoice_app.bat
-└── start_invoice_app.command
-```
-
-## 环境要求
-
-- Python 3.9+
-- macOS 或 Windows
-- 推荐使用虚拟环境
-
-核心依赖见 [source/requirements.txt](source/requirements.txt)。
-
-## 本地开发启动
-
-1. 创建虚拟环境
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-```
-
-2. 安装依赖
-
-```bash
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 pip install -r source/requirements.txt
-```
-
-3. 启动程序
-
-```bash
 python main.py
 ```
 
@@ -120,100 +70,26 @@ python -m compileall main.py source tests
 python -m unittest discover -s tests
 ```
 
-当前测试覆盖了解析器、批处理去重、Excel 导出、配置读写、PDF 文件校验、文本提取 fallback 和自动 OCR 复核逻辑。真实 OCR 与完整打包验证仍建议作为手动或发布前检查。
+当前测试覆盖解析器、批处理去重、Excel 导出、配置读写、PDF 文件校验、文本提取 fallback 和自动 OCR 复核逻辑。
 
-## 版本与 GitHub 管理
-
-- 版本管理规则见 [docs/VERSIONING.md](docs/VERSIONING.md)。
-- GitHub 首页、Issue、PR、Actions 和 Release 维护规则见 [docs/GITHUB_MANAGEMENT.md](docs/GITHUB_MANAGEMENT.md)。
-- 主要变更记录见 [CHANGELOG.md](CHANGELOG.md)。
-- 本仓库使用 PR 合并到 `main`，正式发布包通过 GitHub Releases 分发。
-
-## 运行方式说明
-
-这个项目有两种常见运行方式：
-
-- 源码运行：在项目目录中安装依赖后，直接执行 `python main.py`
-- 打包运行：运行打包脚本后，使用生成的 `.app`、`.exe` 或发布压缩包
-
-如果你看到的是开发阶段窗口截图，那也可能来自源码运行版本，而不一定是已经打包完成的安装包。
-
-## 打包说明
-
-### macOS Apple Silicon
-
-在 Apple Silicon Mac 上执行：
-
-```bash
-python -m PyInstaller tools/invoice_organizer.spec --noconfirm --distpath app/mac --workpath build/mac
-```
-
-### macOS Intel
-
-在 Intel Mac 上执行：
-
-```bash
-./build_mac_intel.command
-```
-
-会生成：
+## 项目结构
 
 ```text
-app/mac_intel/PDF发票自动整理归纳工具.app
-release/mac/intel/PDF发票自动整理归纳工具_mac_intel_YYYYMMDD_HHMMSS.zip
+source/   应用源码、界面、解析、导出和工具模块
+tests/    单元测试
+.github/  CI、Issue 模板和 PR 模板
+docs/     版本管理与 GitHub 维护说明
+tools/    打包配置与辅助脚本
+runtime/  运行期配置和日志位置说明
 ```
 
-### Windows
+## 版本与维护
 
-在 Windows 环境中执行：
+- 更新日志：[CHANGELOG.md](CHANGELOG.md)
+- 版本管理规则：[docs/VERSIONING.md](docs/VERSIONING.md)
+- GitHub 维护说明：[docs/GITHUB_MANAGEMENT.md](docs/GITHUB_MANAGEMENT.md)
+- 正式发布包通过 [GitHub Releases](https://github.com/CoolX01/pdf_invoice_organizer/releases) 分发。
 
-```text
-build_windows.bat
-```
+## 许可证
 
-会生成：
-
-```text
-app/windows/PDF发票自动整理归纳工具/
-```
-
-注意：Windows 当前是 `one-dir` 打包，发布时需要连同 `_internal` 目录一起分发，不能只发 `.exe`。
-
-## 运行数据位置
-
-项目目录内不保存用户运行数据。
-
-macOS：
-- 配置：`~/Library/Application Support/PDF发票自动整理归纳工具/`
-- 日志：`~/Library/Logs/PDF发票自动整理归纳工具/`
-
-Windows：
-- 配置：`%APPDATA%\PDF发票自动整理归纳工具\`
-- 日志：`%LOCALAPPDATA%\PDF发票自动整理归纳工具\logs\`
-
-详细说明见 [runtime/README.md](runtime/README.md)。
-
-## 主要入口
-
-- 根入口：[main.py](main.py)
-- 应用启动逻辑：[source/app.py](source/app.py)
-- 主窗口：[source/ui/main_window.py](source/ui/main_window.py)
-- 解析服务：[source/services/invoice_service.py](source/services/invoice_service.py)
-- Excel 导出：[source/exporters/excel_exporter.py](source/exporters/excel_exporter.py)
-
-## 分层约定
-
-- `ui`：只负责交互、提示和界面刷新。
-- `services`：编排导入、识别、去重、文件发现等流程。
-- `parsers`：只做文本提取和字段解析，不依赖界面。
-- `exporters`：只负责输出文件，并处理导出安全细节。
-- `utils`：无业务状态的通用工具。
-
-运行期未使用本地数据库；识别结果主要保存在内存中，用户主动导出时写入 Excel。日志和配置写入系统用户目录，项目目录内不保存用户运行数据。
-
-## GitHub 发布建议
-
-- 提交源码、文档、配置样例和打包脚本
-- 不提交 `.venv`、`.venv_intel`、`.venv_windows`
-- 不提交 `build/`、`.app`、`.exe`、压缩包、日志、`__pycache__`
-- 用 GitHub Release 分发各平台打包产物，而不是直接放进仓库
+本项目使用 [MIT License](LICENSE)。
