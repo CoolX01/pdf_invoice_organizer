@@ -75,29 +75,44 @@ class MainWindow(QMainWindow):
     def _build_ui(self) -> None:
         self.page_stack = QStackedWidget()
         self.main_page = QWidget()
-        root_layout = QVBoxLayout(self.main_page)
+        root_layout = QHBoxLayout(self.main_page)
         root_layout.setContentsMargins(14, 14, 14, 14)
-        root_layout.setSpacing(8)
+        root_layout.setSpacing(12)
 
-        top_panel = self._build_top_panel()
-        queue_panel = self._build_queue_panel()
+        sidebar_panel = self._build_sidebar_panel()
         results_panel = self._build_results_panel()
         self.log_page = self._build_log_page()
 
-        queue_panel.setFixedHeight(165)
+        sidebar_panel.setFixedWidth(350)
         results_panel.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding,
         )
 
-        root_layout.addWidget(top_panel)
-        root_layout.addWidget(queue_panel)
+        root_layout.addWidget(sidebar_panel)
         root_layout.addWidget(results_panel, 1)
 
         self.page_stack.addWidget(self.main_page)
         self.page_stack.addWidget(self.log_page)
         self.setCentralWidget(self.page_stack)
         self._apply_styles()
+
+    def _build_sidebar_panel(self) -> QWidget:
+        panel = QFrame()
+        panel.setObjectName("SidebarPanel")
+        panel.setSizePolicy(
+            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Expanding,
+        )
+
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
+
+        layout.addWidget(self._build_file_card())
+        layout.addWidget(self._build_status_card())
+        layout.addWidget(self._build_queue_panel(), 1)
+        return panel
 
     def _build_top_panel(self) -> QWidget:
         panel = QFrame()
@@ -106,15 +121,23 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(14, 12, 14, 12)
         layout.setSpacing(12)
 
+        file_card = self._build_file_card()
+        status_card = self._build_status_card()
+
+        layout.addWidget(file_card, 3)
+        layout.addWidget(status_card, 2)
+        return panel
+
+    def _build_file_card(self) -> QWidget:
         file_card = QFrame()
-        file_card.setObjectName("TopActionCard")
+        file_card.setObjectName("SidebarCard")
         file_card.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Fixed,
         )
         file_layout = QVBoxLayout(file_card)
-        file_layout.setContentsMargins(0, 10, 12, 10)
-        file_layout.setSpacing(8)
+        file_layout.setContentsMargins(12, 12, 12, 12)
+        file_layout.setSpacing(9)
 
         file_title_row = QHBoxLayout()
         file_title_row.setSpacing(8)
@@ -128,21 +151,24 @@ class MainWindow(QMainWindow):
         button_row.setSpacing(8)
 
         self.file_button = QPushButton("选择 PDF 文件")
-        self._configure_toolbar_button(self.file_button, minimum_width=150)
+        self._configure_sidebar_button(self.file_button)
         self.file_button.clicked.connect(self.choose_files)
         button_row.addWidget(self.file_button)
 
         self.folder_button = QPushButton("选择文件夹")
-        self._configure_toolbar_button(self.folder_button, minimum_width=132)
+        self._configure_sidebar_button(self.folder_button)
         self.folder_button.clicked.connect(self.choose_folder)
         button_row.addWidget(self.folder_button)
 
-        self.output_button = QPushButton("更改导出位置")
-        self._configure_toolbar_button(self.output_button, minimum_width=150)
-        self.output_button.clicked.connect(self.choose_output_path)
-        button_row.addWidget(self.output_button)
-        button_row.addStretch(1)
         file_layout.addLayout(button_row)
+
+        output_row = QHBoxLayout()
+        output_row.setSpacing(8)
+        self.output_button = QPushButton("更改导出位置")
+        self._configure_sidebar_button(self.output_button)
+        self.output_button.clicked.connect(self.choose_output_path)
+        output_row.addWidget(self.output_button)
+        file_layout.addLayout(output_row)
 
         self.output_path_label = QLabel(f"输出路径：{self.output_path}")
         self.output_path_label.setObjectName("PathLabel")
@@ -151,18 +177,20 @@ class MainWindow(QMainWindow):
 
         hint = QLabel("可选择 PDF 文件、选择文件夹，或直接把 PDF 文件拖拽到窗口中。")
         hint.setObjectName("HintLabel")
+        hint.setWordWrap(True)
         file_layout.addWidget(hint)
+        return file_card
 
+    def _build_status_card(self) -> QWidget:
         status_card = QFrame()
-        status_card.setObjectName("TopStatusCard")
-        status_card.setMinimumWidth(430)
+        status_card.setObjectName("SidebarCard")
         status_card.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Fixed,
         )
         status_layout = QVBoxLayout(status_card)
-        status_layout.setContentsMargins(0, 10, 12, 10)
-        status_layout.setSpacing(8)
+        status_layout.setContentsMargins(12, 12, 12, 12)
+        status_layout.setSpacing(9)
 
         status_title_row = QHBoxLayout()
         status_title_row.setSpacing(8)
@@ -170,13 +198,6 @@ class MainWindow(QMainWindow):
         status_title.setObjectName("SectionTitle")
         status_title_row.addWidget(status_title)
         status_title_row.addStretch(1)
-
-        self.log_page_button = QPushButton("日志 / 状态")
-        self.log_page_button.setObjectName("HeaderActionButton")
-        self.log_page_button.setToolTip("查看详细运行日志和状态记录")
-        self._configure_toolbar_button(self.log_page_button, minimum_width=104)
-        self.log_page_button.clicked.connect(self._show_log_page)
-        status_title_row.addWidget(self.log_page_button)
         status_layout.addLayout(status_title_row)
 
         metric_row = QHBoxLayout()
@@ -184,12 +205,12 @@ class MainWindow(QMainWindow):
 
         self.file_count_label = QLabel("当前文件：0")
         self.file_count_label.setObjectName("TopMetricLabel")
-        self.file_count_label.setMinimumWidth(118)
+        self.file_count_label.setMinimumWidth(116)
         metric_row.addWidget(self.file_count_label)
 
         self.status_label = QLabel("状态：待命")
         self.status_label.setObjectName("TopMetricLabel")
-        self.status_label.setMinimumWidth(178)
+        self.status_label.setMinimumWidth(120)
         self.status_label.setWordWrap(True)
         metric_row.addWidget(self.status_label, 1)
 
@@ -198,16 +219,19 @@ class MainWindow(QMainWindow):
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
-        self.progress_bar.setMinimumWidth(260)
         self.progress_bar.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Fixed,
         )
         status_layout.addWidget(self.progress_bar)
 
-        layout.addWidget(file_card, 3)
-        layout.addWidget(status_card, 2)
-        return panel
+        self.log_page_button = QPushButton("日志 / 状态")
+        self.log_page_button.setObjectName("HeaderActionButton")
+        self.log_page_button.setToolTip("查看详细运行日志和状态记录")
+        self._configure_sidebar_button(self.log_page_button)
+        self.log_page_button.clicked.connect(self._show_log_page)
+        status_layout.addWidget(self.log_page_button)
+        return status_card
 
     def _build_results_panel(self) -> QWidget:
         panel = QFrame()
@@ -265,40 +289,48 @@ class MainWindow(QMainWindow):
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Fixed,
         )
-        controls_row = QHBoxLayout(controls_panel)
-        controls_row.setContentsMargins(8, 8, 8, 8)
-        controls_row.setSpacing(8)
+        controls_layout = QVBoxLayout(controls_panel)
+        controls_layout.setContentsMargins(10, 8, 10, 8)
+        controls_layout.setSpacing(7)
+
+        primary_row = QHBoxLayout()
+        primary_row.setContentsMargins(0, 0, 0, 0)
+        primary_row.setSpacing(7)
+
+        secondary_row = QHBoxLayout()
+        secondary_row.setContentsMargins(0, 0, 0, 0)
+        secondary_row.setSpacing(7)
 
         self.start_button = QPushButton("开始分析")
         self.start_button.setObjectName("PrimaryActionButton")
-        self._configure_toolbar_button(self.start_button, minimum_width=94)
+        self._configure_toolbar_button(self.start_button, minimum_width=86)
         self.start_button.clicked.connect(self.start_analysis)
 
         self.cancel_button = QPushButton("取消分析")
         self.cancel_button.setObjectName("HeaderActionButton")
-        self._configure_toolbar_button(self.cancel_button, minimum_width=94)
+        self._configure_toolbar_button(self.cancel_button, minimum_width=86)
         self.cancel_button.clicked.connect(self.cancel_analysis)
 
         self.remove_duplicates_button = QPushButton("移除重复项")
         self.remove_duplicates_button.setObjectName("HeaderActionButton")
         self.remove_duplicates_button.setToolTip("只从结果表移除重复项，不删除本地 PDF 文件。")
-        self._configure_toolbar_button(self.remove_duplicates_button, minimum_width=120)
+        self._configure_toolbar_button(self.remove_duplicates_button, minimum_width=100)
         self.remove_duplicates_button.clicked.connect(self.remove_duplicate_files)
 
         self.delete_local_duplicates_button = QPushButton("移到废纸篓")
         self.delete_local_duplicates_button.setObjectName("DangerActionButton")
         self.delete_local_duplicates_button.setToolTip("把本地重复 PDF 移到系统废纸篓/回收站。")
-        self._configure_toolbar_button(self.delete_local_duplicates_button, minimum_width=112)
+        self._configure_toolbar_button(self.delete_local_duplicates_button, minimum_width=96)
         self.delete_local_duplicates_button.clicked.connect(self.delete_duplicate_local_files)
 
         self.export_button = QPushButton("输出 Excel")
         self.export_button.setObjectName("PrimaryActionButton")
-        self._configure_toolbar_button(self.export_button, minimum_width=112)
+        self._configure_toolbar_button(self.export_button, minimum_width=98)
         self.export_button.clicked.connect(self.export_excel)
 
         self.clear_button = QPushButton("清空列表")
         self.clear_button.setObjectName("HeaderActionButton")
-        self._configure_toolbar_button(self.clear_button, minimum_width=90)
+        self._configure_toolbar_button(self.clear_button, minimum_width=82)
         self.clear_button.clicked.connect(self.clear_files)
 
         filter_specs = [
@@ -312,55 +344,53 @@ class MainWindow(QMainWindow):
             button = QPushButton(label)
             button.setObjectName("FilterButton")
             button.setCheckable(True)
-            self._configure_toolbar_button(button, minimum_width=64)
+            self._configure_toolbar_button(button, minimum_width=52)
             button.clicked.connect(lambda checked=False, name=filter_name: self._set_result_filter(name))
             self.filter_buttons[filter_name] = button
             filter_widgets.append(button)
 
         self.filter_status_label = QLabel("显示 0 / 0")
         self.filter_status_label.setObjectName("FilterStatusLabel")
-        self.filter_status_label.setMinimumWidth(118)
+        self.filter_status_label.setMinimumWidth(82)
         self.filter_status_label.setSizePolicy(
             QSizePolicy.Policy.Fixed,
             QSizePolicy.Policy.Fixed,
         )
-        filter_widgets.append(self.filter_status_label)
         self._refresh_filter_buttons()
 
-        controls_row.addWidget(
-            self._build_control_group(
-                "分析",
-                [self.start_button, self.cancel_button],
-                minimum_width=220,
-            ),
-            2,
-        )
-        controls_row.addWidget(
-            self._build_control_group(
-                "筛选显示",
-                filter_widgets,
-                minimum_width=430,
-            ),
-            5,
-        )
-        controls_row.addWidget(
-            self._build_control_group(
-                "重复处理",
-                [self.remove_duplicates_button, self.delete_local_duplicates_button],
-                minimum_width=270,
-            ),
-            3,
-        )
-        controls_row.addWidget(
-            self._build_control_group(
-                "导出",
-                [self.export_button, self.clear_button],
-                minimum_width=220,
-            ),
-            2,
-        )
+        primary_row.addWidget(self.start_button)
+        primary_row.addWidget(self.cancel_button)
+        primary_row.addWidget(self._build_toolbar_separator())
+
+        filter_label = QLabel("筛选")
+        filter_label.setObjectName("ToolbarLabel")
+        primary_row.addWidget(filter_label)
+        for widget in filter_widgets:
+            primary_row.addWidget(widget)
+        primary_row.addWidget(self.filter_status_label)
+        primary_row.addStretch(1)
+
+        secondary_row.addStretch(1)
+        secondary_row.addWidget(self.remove_duplicates_button)
+        secondary_row.addWidget(self.delete_local_duplicates_button)
+        secondary_row.addWidget(self.export_button)
+        secondary_row.addWidget(self.clear_button)
+
+        controls_layout.addLayout(primary_row)
+        controls_layout.addLayout(secondary_row)
 
         return controls_panel
+
+    def _build_toolbar_separator(self) -> QWidget:
+        separator = QFrame()
+        separator.setObjectName("ToolbarSeparator")
+        separator.setFixedWidth(1)
+        separator.setFixedHeight(28)
+        separator.setSizePolicy(
+            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Fixed,
+        )
+        return separator
 
     def _build_control_group(
         self,
@@ -399,9 +429,13 @@ class MainWindow(QMainWindow):
     def _build_queue_panel(self) -> QWidget:
         panel = QFrame()
         panel.setObjectName("QueuePanel")
+        panel.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(14, 8, 14, 8)
-        layout.setSpacing(6)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
 
         title_row = QHBoxLayout()
         title_row.setSpacing(8)
@@ -417,7 +451,11 @@ class MainWindow(QMainWindow):
         layout.addLayout(title_row)
 
         self.file_list_widget = QListWidget()
-        self.file_list_widget.setFixedHeight(112)
+        self.file_list_widget.setMinimumHeight(210)
+        self.file_list_widget.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
         self.file_list_widget.setUniformItemSizes(True)
         self.file_list_widget.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         layout.addWidget(self.file_list_widget)
@@ -1431,64 +1469,86 @@ class MainWindow(QMainWindow):
             QSizePolicy.Policy.Fixed,
         )
 
+    def _configure_sidebar_button(self, button: QPushButton) -> None:
+        button.setMinimumWidth(0)
+        button.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
+
     def _apply_styles(self) -> None:
         self.setStyleSheet(
             """
             QWidget {
-                color: #111827;
+                color: #142033;
                 font-size: 14px;
+                selection-background-color: #cfe8f3;
+                selection-color: #0f172a;
             }
             QMainWindow {
-                background: #eef3f7;
+                background: #edf3f7;
             }
-            QFrame#TopPanel, QFrame#QueuePanel, QFrame#ResultsPanel,
+            QFrame#SidebarPanel, QFrame#ResultsPanel,
             QFrame#LogHeaderPanel, QFrame#LogContentPanel {
                 background: #ffffff;
-                border: 1px solid #d7e1ea;
-                border-radius: 12px;
+                border: 1px solid #d6e3ec;
+                border-radius: 16px;
+            }
+            QFrame#SidebarPanel {
+                background: #f8fbfd;
+            }
+            QFrame#SidebarCard, QFrame#QueuePanel {
+                background: #ffffff;
+                border: 1px solid #dbe7ef;
+                border-radius: 14px;
             }
             QFrame#TopPanel {
-                background: #f5f9fc;
+                background: #f8fbfd;
+                border: 1px solid #d6e3ec;
+                border-radius: 16px;
             }
             QFrame#TopActionCard, QFrame#TopStatusCard {
                 background: #ffffff;
-                border: 1px solid #dbe6ef;
-                border-radius: 10px;
+                border: 1px solid #dbe7ef;
+                border-radius: 14px;
             }
             QFrame#ResultsControlsPanel {
-                background: #f5f9fc;
-                border: 1px solid #d8e5ee;
-                border-radius: 10px;
+                background: #f7fbfd;
+                border: 1px solid #d8e6ef;
+                border-radius: 12px;
             }
             QFrame#ControlGroup {
-                background: #ffffff;
-                border: 1px solid #dbe6ef;
-                border-radius: 9px;
+                background: transparent;
+                border: 0;
+            }
+            QFrame#ToolbarSeparator {
+                background: #d7e3ec;
+                border: 0;
+                margin: 3px 4px;
             }
             QLabel#SectionTitle {
-                font-size: 16px;
-                font-weight: 700;
-                color: #1e293b;
+                font-size: 17px;
+                font-weight: 800;
+                color: #172338;
             }
-            QLabel#ControlGroupTitle {
-                font-size: 11px;
+            QLabel#ControlGroupTitle, QLabel#ToolbarLabel {
+                font-size: 12px;
                 font-weight: 700;
                 color: #64748b;
-                letter-spacing: 0.5px;
             }
             QLabel#AmountSummary {
                 font-size: 14px;
-                font-weight: 600;
-                color: #3d6f8e;
+                font-weight: 700;
+                color: #2a6c88;
             }
             QLabel#SummaryBadge {
                 font-size: 14px;
-                font-weight: 700;
-                color: #245e7a;
-                background: #edf8fd;
-                border: 1px solid #cce7f3;
-                border-radius: 8px;
-                padding: 6px 10px;
+                font-weight: 800;
+                color: #075c76;
+                background: #e9f7fc;
+                border: 1px solid #bee4f0;
+                border-radius: 10px;
+                padding: 7px 12px;
             }
             QLabel#TopStatusLabel,
             QLabel#InlineLabel {
@@ -1496,148 +1556,150 @@ class MainWindow(QMainWindow):
                 font-weight: 600;
             }
             QLabel#TopMetricLabel {
-                color: #1e293b;
+                color: #1f3447;
                 font-size: 13px;
-                font-weight: 700;
+                font-weight: 800;
                 background: #edf8fd;
-                border: 1px solid #cce7f3;
-                border-radius: 8px;
-                padding: 5px 9px;
+                border: 1px solid #cbe8f3;
+                border-radius: 10px;
+                padding: 6px 9px;
             }
             QLabel#PathLabel {
-                color: #1f2937;
+                color: #26384c;
                 font-size: 12px;
-                font-weight: 600;
+                font-weight: 650;
+                line-height: 145%;
             }
             QLabel#HintLabel {
-                color: #475569;
+                color: #66788a;
                 font-size: 12px;
                 font-weight: 600;
+                line-height: 145%;
             }
             QLabel#FilterStatusLabel {
                 color: #475569;
-                font-weight: 700;
-                padding-left: 4px;
+                font-size: 12px;
+                font-weight: 800;
+                padding-left: 3px;
             }
             QPushButton {
-                color: #1e293b;
-                min-height: 32px;
-                padding: 0 14px;
-                border-radius: 8px;
-                border: 1px solid #b7c6d4;
-                background: #f8fafc;
-                font-weight: 600;
+                color: #1e3142;
+                min-height: 30px;
+                padding: 0 11px;
+                border-radius: 9px;
+                border: 1px solid #b7c7d5;
+                background: #fbfdff;
+                font-weight: 700;
             }
             QPushButton:hover {
-                background: #edf5fb;
-                border-color: #7fa0b6;
+                background: #eef7fb;
+                border-color: #7da0b5;
             }
             QPushButton:pressed {
-                background: #dfeef7;
+                background: #dceef6;
             }
             QPushButton#PrimaryActionButton {
-                font-weight: 700;
-                color: #15384a;
-                background: #dff0f8;
-                border: 2px solid #5d8398;
+                color: #06384a;
+                background: #d8f0f7;
+                border: 2px solid #3f7f95;
+                font-weight: 800;
             }
             QPushButton#PrimaryActionButton:hover {
-                background: #d1e9f5;
-                border-color: #486f85;
+                background: #cdeaf4;
+                border-color: #2f6d83;
             }
             QPushButton#HeaderActionButton {
-                font-weight: 600;
-                color: #203748;
-                background: #f8fafc;
-                border: 2px solid #7790a2;
+                color: #263c4f;
+                background: #ffffff;
+                border: 1px solid #aebfcd;
+                font-weight: 700;
             }
             QPushButton#HeaderActionButton:hover {
-                background: #edf5fb;
-                border-color: #5e7a8f;
+                background: #eff7fb;
+                border-color: #7898ad;
             }
             QPushButton#FilterButton {
-                color: #334155;
+                color: #35465a;
                 min-height: 28px;
-                padding: 0 12px;
-                font-weight: 600;
+                padding: 0 9px;
+                font-weight: 700;
                 background: #ffffff;
-                border: 1px solid #b9c8d6;
+                border: 1px solid #b9c9d6;
+                border-radius: 8px;
             }
             QPushButton#FilterButton:checked {
-                color: #10384c;
-                background: #d9eef8;
-                border: 2px solid #2f6f89;
+                color: #06384a;
+                background: #ddf2f8;
+                border: 2px solid #24708a;
             }
             QPushButton#DangerActionButton {
-                font-weight: 600;
                 color: #8a2428;
-                background: #fff1f0;
-                border: 2px solid #d08f8b;
+                background: #fff6f5;
+                border: 1px solid #d5a4a1;
+                font-weight: 700;
             }
             QPushButton#DangerActionButton:hover {
-                background: #ffe4e1;
-                border-color: #bd6f6a;
+                background: #ffe9e7;
+                border-color: #bd716c;
             }
-            QPushButton:disabled {
-                color: #64748b;
-                background: #eef2f6;
-                border-color: #cbd5df;
-            }
+            QPushButton:disabled,
             QPushButton#PrimaryActionButton:disabled,
             QPushButton#HeaderActionButton:disabled,
             QPushButton#DangerActionButton:disabled,
             QPushButton#FilterButton:disabled {
-                color: #64748b;
-                background: #eef2f6;
-                border-color: #cbd5df;
+                color: #7b8795;
+                background: #eef3f7;
+                border-color: #cfdae4;
             }
             QTableWidget {
                 color: #111827;
                 font-size: 12px;
-                gridline-color: #dfe6ed;
+                gridline-color: #e2e9f0;
                 background: #ffffff;
-                alternate-background-color: #f7fafc;
+                alternate-background-color: #f8fbfd;
                 selection-background-color: #cfe8f3;
                 selection-color: #0f172a;
-                border: 1px solid #ccd7e2;
-                border-radius: 6px;
+                border: 1px solid #d2dee8;
+                border-radius: 10px;
             }
             QTableWidget::item {
-                padding: 3px 6px;
+                padding: 4px 7px;
+                border: 0;
             }
             QHeaderView::section {
-                color: #334155;
+                color: #26384d;
                 font-size: 12px;
-                background: #e7eef5;
-                padding: 5px 6px;
+                background: #eaf1f6;
+                padding: 7px 6px;
                 border: 0;
-                border-right: 1px solid #dce3ea;
-                border-bottom: 1px solid #dce3ea;
-                font-weight: 700;
+                border-right: 1px solid #dce5ed;
+                border-bottom: 1px solid #dce5ed;
+                font-weight: 800;
             }
             QTextEdit {
                 color: #1f2937;
                 background: #fbfdff;
                 border: 1px solid #d7e1ea;
-                border-radius: 8px;
-                padding: 6px;
+                border-radius: 10px;
+                padding: 7px;
                 selection-background-color: #cfe8f3;
                 selection-color: #0f172a;
             }
             QListWidget {
-                color: #1f2937;
+                color: #253348;
                 font-size: 12px;
                 background: #fbfdff;
-                border: 1px solid #d7e1ea;
-                border-radius: 8px;
-                padding: 3px;
+                border: 1px solid #d9e4ed;
+                border-radius: 10px;
+                padding: 5px;
                 selection-background-color: #d9eef8;
                 selection-color: #0f172a;
             }
             QListWidget::item {
-                color: #1f2937;
-                min-height: 18px;
-                padding: 1px 6px;
+                color: #253348;
+                min-height: 22px;
+                padding: 2px 7px;
+                border-radius: 5px;
             }
             QListWidget::item:alternate {
                 background: #f7fafc;
@@ -1645,15 +1707,15 @@ class MainWindow(QMainWindow):
             QProgressBar {
                 color: #0f172a;
                 min-height: 22px;
-                border: 1px solid #c7d2da;
-                border-radius: 8px;
-                background: #e8eef4;
+                border: 1px solid #c9d6df;
+                border-radius: 10px;
+                background: #e9f0f5;
                 text-align: center;
-                font-weight: 700;
+                font-weight: 800;
             }
             QProgressBar::chunk {
-                background: #9ed4e7;
-                border-radius: 7px;
+                background: #8fd0e4;
+                border-radius: 9px;
             }
             """
         )
